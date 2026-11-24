@@ -1,0 +1,13 @@
+# 构建产物和虚拟环境
+.venv/
+build/
+dist/
+*.spec
+__pycache__/
+*.pyc
+
+# 发布签名:公钥由 build.bat 生成,私钥永远不进仓库
+miyu/_pubkey.py
+*.key
+*.pem
+release_key*
