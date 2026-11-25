@@ -19,7 +19,10 @@ from .petcare import form_of
 MAX_CARDS = 400
 FUTURE_MS = 10 * 60 * 1000
 MAX_XP_PER_DAY = 120_000          # 比一整天不停打字还多,超过就算可疑
-SPECIES_ICON = {"cat": "🐱", "bunny": "🐰", "bear": "🐻"}
+SPECIES_ICON = {
+    "cat": "🐱", "bunny": "🐰", "bear": "🐻",
+    "capy": "🍊", "shiba": "🐕", "fox": "🦊", "penguin": "🐧",
+}
 
 
 def week_key(t: float | None = None) -> str:

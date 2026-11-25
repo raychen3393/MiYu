@@ -3,20 +3,22 @@
 """
 from __future__ import annotations
 
+import math
 import random
 import threading
 import time
 
-from PySide6.QtCore import QRectF, QTimer, Qt
-from PySide6.QtGui import QBrush, QColor, QFont, QLinearGradient, QPainter, QPixmap, QTextOption
+from PySide6.QtCore import QPoint, QPointF, QRectF, QTimer, Qt
+from PySide6.QtGui import QBrush, QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap, QRadialGradient, QTextOption
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QScrollArea, QVBoxLayout, QWidget
 
 from .. import imaging, sound as S, theme
 from ..dialogs import Dialog, TextDialog, info
 from ..fun import (
-    ACC_BY_ID, BADGES, FRIEND_PHOTO, FX_THEMES, GACHA_PITY, PetGrowth, SPECIES, TypingPet, friend_level,
-    xp_for_level,
+    ACC_BY_ID, BADGES, FRIEND_PHOTO, FX_THEMES, GACHA_PITY, GACHA_POOL, PET_MAX_LEVEL, PetGrowth, SPECIES, TypingPet,
+    friend_level, xp_for_level,
 )
+from ..pet3d import COAT_BY_ID, EYE_BY_ID, clay_brush, contour_pen
 from ..ui import button, label, make_menu
 from ..widgets import Conv
 
@@ -25,18 +27,59 @@ VISIT_SECS = 90                   # 宠物串门待多久
 
 
 class PetHit(QWidget):
-    """盖在宠物身体上的透明小区域:只有这里能点,不挡住聊天内容。左键摸摸,右键喂食 / 玩耍 / 换装。"""
+    """盖在宠物身体上的透明小区域:只有这里能点,不挡住聊天内容。左键摸摸 / 拖拽捏脸,右键喂食 / 玩耍 / 换装。"""
 
-    def __init__(self, parent, on_click, on_menu=None, tip: str = "左键摸摸它 · 右键喂食、玩耍、换装") -> None:
+    def __init__(self, parent, on_click, on_menu=None,
+                 tip: str = "左键摸摸它 · 按住拖拽可 Q 弹捏脸 · 右键喂食、玩耍、换装",
+                 pet_getter=None) -> None:
         super().__init__(parent)
         self.on_click = on_click
         self.on_menu = on_menu
+        self.pet_getter = pet_getter
+        self._down_pos = None
+        self._dragged = False
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip(tip)
 
+    def _pet(self):
+        return self.pet_getter() if self.pet_getter is not None else None
+
+    def mousePressEvent(self, e) -> None:
+        if e.button() == Qt.MouseButton.LeftButton:
+            pos = e.position() if hasattr(e, "position") else e.pos()
+            self._down_pos = QPointF(pos.x(), pos.y())
+            self._dragged = False
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+
+    def mouseMoveEvent(self, e) -> None:
+        if self._down_pos is None:
+            return
+        pos = e.position() if hasattr(e, "position") else e.pos()
+        dx = pos.x() - self._down_pos.x()
+        dy = pos.y() - self._down_pos.y()
+        if math.hypot(dx, dy) > 4.0:
+            pet = self._pet()
+            if pet is not None and hasattr(pet, "pose3d"):
+                if not self._dragged:
+                    pet.pose3d.start_pinch()
+                self._dragged = True
+                pet.pose3d.move_pinch(dx, dy)
+                pet._speed(16)
+                pet.update()
+
     def mouseReleaseEvent(self, e) -> None:
         if e.button() == Qt.MouseButton.LeftButton:
-            self.on_click()
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+            pet = self._pet()
+            if self._dragged and pet is not None and hasattr(pet, "pose3d"):
+                dist = pet.pose3d.end_pinch()
+                if dist > 14.0:
+                    pet.say(random.choice(("唔…脸要被捏扁啦!", "Q 弹年糕脸~", "轻点捏嘛 > <")), 2.2)
+                pet.update()
+            else:
+                self.on_click()
+            self._down_pos = None
+            self._dragged = False
 
     def contextMenuEvent(self, e) -> None:
         if self.on_menu is not None:
@@ -114,55 +157,225 @@ class WallDialog(Dialog):
             b.setText("取下" if self.growth.title == bid else "佩戴")
 
 
+class _CapsuleStage(QWidget):
+    """3.0 扭蛋机动画舞台:玻璃球舱 + 10 颗滚动 2.5D 彩球 + 旋钮转动 + 稀有度光效破壳爆发。"""
+    BALL_COLS = ["#FF6B6B", "#4DABF7", "#FFD43B", "#69DB7C", "#B197FC", "#FF922B", "#F783AC", "#20C997"]
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setFixedSize(210, 178)
+        self._t0 = time.monotonic()
+        self._spin_t = -1e9
+        self._burst_rarity = ""
+        self.timer = QTimer(self)
+        self.timer.setInterval(24)
+        self.timer.timeout.connect(self._tick)
+
+    def spin(self, rarity: str) -> None:
+        self._spin_t = time.monotonic()
+        self._burst_rarity = rarity
+        self.timer.start()
+        self.update()
+
+    def _tick(self) -> None:
+        if time.monotonic() - self._spin_t > 1.35:
+            self.timer.stop()
+        self.update()
+
+    def paintEvent(self, _e) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        now = time.monotonic()
+        dt = now - self._spin_t
+        spinning = 0 <= dt <= 0.52
+        burst = 0.52 < dt <= 1.30
+        cx, cy = 105.0, 74.0
+
+        # 底座机身(潮玩红白/主题色渐变)
+        base_col = QColor(theme.T["accent"])
+        body_path = QPainterPath()
+        body_path.moveTo(cx - 52, cy + 36)
+        body_path.lineTo(cx + 52, cy + 36)
+        body_path.lineTo(cx + 60, 168)
+        body_path.lineTo(cx - 60, 168)
+        body_path.closeSubpath()
+        p.setPen(contour_pen(base_col, 1.4))
+        p.setBrush(clay_brush(cx, 138, 62, 38, base_col))
+        p.drawPath(body_path)
+
+        # 出蛋口小门
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(20, 20, 30, 140))
+        p.drawRoundedRect(QRectF(cx - 18, 144, 36, 20), 7, 7)
+
+        # 玻璃球舱内的 3D 扭蛋球
+        shake = math.sin(dt * 38) * 9.0 if spinning else math.sin((now - self._t0) * 1.2) * 1.0
+        for i in range(9):
+            ang = i * 0.72 + (dt * 9.5 if spinning else 0.0)
+            bx = cx + math.cos(ang + i) * (28 - (i % 3) * 6) + shake * (1 if i % 2 else -1) * 0.45
+            by = cy + 12 + math.sin(ang * 1.3 + i) * 16 - (i % 3) * 4
+            col = QColor(self.BALL_COLS[i % len(self.BALL_COLS)])
+            p.setPen(contour_pen(col, 1.0))
+            p.setBrush(clay_brush(bx, by, 11, 11, col))
+            p.drawEllipse(QPointF(bx, by), 10.5, 10.5)
+
+        # 透明高光玻璃罩
+        glass = QRadialGradient(QPointF(cx - 18, cy - 20), 66)
+        glass.setColorAt(0.0, QColor(255, 255, 255, 115))
+        glass.setColorAt(0.65, QColor(200, 225, 255, 32))
+        glass.setColorAt(1.0, QColor(255, 255, 255, 68))
+        p.setPen(QPen(QColor(255, 255, 255, 165), 2.0))
+        p.setBrush(QBrush(glass))
+        p.drawEllipse(QPointF(cx, cy), 56, 54)
+
+        # 金属旋转把手
+        p.save()
+        p.translate(cx, 126)
+        p.rotate(dt * 360 if spinning else 0.0)
+        p.setPen(contour_pen(QColor("#FFF3BF"), 1.2))
+        p.setBrush(clay_brush(0, 0, 14, 14, QColor("#FFD43B")))
+        p.drawEllipse(QPointF(0, 0), 13, 13)
+        p.setBrush(QColor("#FFF9DB"))
+        p.drawRoundedRect(QRectF(-10, -3.2, 20, 6.4), 3, 3)
+        p.restore()
+
+        # 扭蛋破壳光环爆发(R 蓝光 / SR 紫电 / SSR 金虹爆闪)
+        if burst:
+            k = (dt - 0.52) / 0.78
+            rc = QColor(RARITY_COLOR.get(self._burst_rarity, "#0A84FF"))
+            rc.setAlphaF(max(0.0, 1.0 - k))
+            r_ring = 18 + k * 78
+            p.setPen(QPen(rc, max(1.5, 6.0 * (1 - k))))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawEllipse(QPointF(cx, 150 - k * 42), r_ring, r_ring * 0.75)
+            if self._burst_rarity in ("SR", "SSR"):
+                for j in range(10 if self._burst_rarity == "SSR" else 6):
+                    a = j / (10 if self._burst_rarity == "SSR" else 6) * math.tau + k * 2.2
+                    sx = cx + math.cos(a) * (14 + k * 68)
+                    sy = 135 - k * 36 + math.sin(a) * (12 + k * 50)
+                    scol = QColor.fromHsv((j * 36 + int(k * 180)) % 360, 190, 255) if self._burst_rarity == "SSR" else rc
+                    scol.setAlphaF(max(0.0, 1.0 - k))
+                    p.setPen(Qt.PenStyle.NoPen)
+                    p.setBrush(scol)
+                    p.drawEllipse(QPointF(sx, sy), 4.2 * (1 - k * 0.5), 4.2 * (1 - k * 0.5))
+        p.end()
+
+
 class GachaDialog(Dialog):
     def __init__(self, parent, growth: PetGrowth, on_draw) -> None:
-        super().__init__(parent, "抽卡")
+        super().__init__(parent, "潮玩扭蛋机")
+        self.win = parent
         self.growth, self.on_draw = growth, on_draw
-        self.setFixedWidth(380)
+        self.setFixedWidth(486)
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(28, 24, 28, 20)
+        lay.setContentsMargins(26, 22, 26, 18)
         lay.setSpacing(8)
-        lay.addWidget(label("🎰 抽卡", "dialogTitle", center=True))
+        lay.addWidget(label("🎰 潮玩扭蛋机", "dialogTitle", center=True))
         self.sub = label("", "hint", center=True)
         lay.addWidget(self.sub)
+
+        stage_row = QHBoxLayout()
+        stage_row.setSpacing(10)
+        self.machine = _CapsuleStage(self)
+        stage_row.addWidget(self.machine)
+
         self.card = QFrame()
         self.card.setObjectName("plainCard")
-        self.card.setMinimumHeight(130)
+        self.card.setMinimumHeight(178)
         cl = QVBoxLayout(self.card)
+        cl.setContentsMargins(12, 10, 12, 10)
+        cl.setSpacing(4)
         self.rarity = label("?", "gachaRarity", center=True)
-        self.name = label("点下面的按钮抽一张", "cardTitle", center=True)
-        self.note = label("", "fileSub", center=True)
-        for w in (self.rarity, self.name, self.note):
-            cl.addWidget(w)
-        lay.addWidget(self.card)
-        lay.addWidget(label("每天第一次打开送 1 张券,宠物每升一级再送 1 张。\n能抽到:帽子衣服等装扮、气泡皮肤、打字特效、音效主题;"
-                            f"重复的换成经验。\n概率:N 55% · R 32% · SR 11% · SSR 2%,{GACHA_PITY} 抽之内必出 SR 以上。",
+        self.preview = TypingPet(self.card)
+        self.preview.bare = True
+        self.preview.centered = True
+        self.preview.visitor = True
+        self.preview.setFixedSize(210, 88)
+        if hasattr(parent, "pet"):
+            self.preview.set_species(parent.pet.species)
+        self.preview.growth = PetGrowth(growth.to_dict())
+        self.preview.pose3d.yaw = -0.18
+        self.name = label("扭动把手开启盲盒", "cardTitle", center=True, wrap=True)
+        self.note = label("抽到新装扮可立即试穿预览", "fileSub", center=True, wrap=True)
+        cl.addWidget(self.rarity)
+        cl.addWidget(self.preview, 0, Qt.AlignmentFlag.AlignCenter)
+        cl.addWidget(self.name)
+        cl.addWidget(self.note)
+        stage_row.addWidget(self.card, 1)
+        lay.addLayout(stage_row)
+
+        lay.addWidget(label("每天首次打开送 1 张券,宠物每升一级送 1 张。概率:N 55% · R 32% · SR 11% · SSR 2%,"
+                            f"{GACHA_PITY} 抽内必出 SR 以上;重复装扮自动转化为经验。",
                             "faint", wrap=True, center=True))
-        self.go = button("抽一次", "primary", self.draw)
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        self.go = button("扭一次", "primary", self.draw)
         self.go.setMinimumHeight(40)
-        lay.addWidget(self.go)
+        self.go_ten = button("十连扭 ✨", "", self.draw_ten)
+        self.go_ten.setMinimumHeight(40)
+        btn_row.addWidget(self.go, 2)
+        btn_row.addWidget(self.go_ten, 1)
+        lay.addLayout(btn_row)
         lay.addWidget(button("关闭", "link", self.accept))
         self.refresh()
 
     def refresh(self) -> None:
         n = self.growth.tickets
-        self.sub.setText(f"抽卡券:{n} 张")
+        owned_n = sum(1 for _r, kind, iid, _nm in GACHA_POOL if self.growth.has(kind, iid))
+        self.sub.setText(f"扭蛋券:{n} 张  ·  图鉴已收集 {owned_n} / {len(GACHA_POOL)}  ·  保底进度 {self.growth.pity}/{GACHA_PITY}")
         self.go.setEnabled(n > 0)
-        self.go.setText("抽一次" if n > 0 else "今天的券用完了,明天再来")
+        self.go.setText("扭一次 (1 券)" if n > 0 else "今天的券用完了,明天再来")
+        self.go_ten.setEnabled(n >= 2)
+        self.go_ten.setText(f"连扭 {min(10, n)} 次" if n >= 2 else "连扭 (需≥2券)")
+
+    def _show_single(self, res: dict) -> None:
+        self.machine.spin(res["rarity"])
+        self.rarity.setText(res["rarity"])
+        self.rarity.setStyleSheet(f"color: {RARITY_COLOR[res['rarity']]};")
+        self.name.setText(res["name"])
+        pg = PetGrowth(self.growth.to_dict())
+        if res["kind"] == "acc" and res["id"] in ACC_BY_ID:
+            slot = ACC_BY_ID[res["id"]][3]
+            pg.owned.add(f"acc:{res['id']}")
+            pg.wear = [w for w in pg.wear if ACC_BY_ID[w][3] != slot] + [res["id"]]
+        self.preview.growth = pg
+        self.preview.celebrate()
+        if res["kind"] == "xp":
+            self.note.setText("🐟 美味加餐补给")
+        elif res["new"]:
+            self.note.setText("✨ 新解锁!已自动收入衣橱/主题库")
+        else:
+            self.note.setText(f"已拥有,自动转化为 +{res['xp']} 经验")
 
     def draw(self) -> None:
         res = self.on_draw()
         if res is None:
             return
-        self.rarity.setText(res["rarity"])
-        self.rarity.setStyleSheet(f"color: {RARITY_COLOR[res['rarity']]};")
-        self.name.setText(res["name"])
-        if res["kind"] == "xp":
-            self.note.setText("安慰奖")
-        elif res["new"]:
-            self.note.setText("✨ 新获得!已经可以在「趣味互动」里使用")
+        self._show_single(res)
+        self.refresh()
+
+    def draw_ten(self) -> None:
+        count = min(10, self.growth.tickets)
+        if count <= 0:
+            return
+        results = []
+        for _ in range(count):
+            r = self.on_draw()
+            if r is not None:
+                results.append(r)
+        if not results:
+            return
+        order = {"N": 0, "R": 1, "SR": 2, "SSR": 3}
+        best = max(results, key=lambda r: (order.get(r["rarity"], 0), r.get("new", False)))
+        self._show_single(best)
+        new_items = [f"[{r['rarity']}]{r['name']}" for r in results if r.get("new")]
+        xp_sum = sum(r.get("xp", 0) for r in results)
+        summary = f"连扭 {len(results)} 发! "
+        if new_items:
+            summary += "新获得: " + "、".join(new_items[:4]) + ("…" if len(new_items) > 4 else "")
         else:
-            self.note.setText(f"已经有了,换成 {res['xp']} 经验")
+            summary += f"累计转化 +{xp_sum} 经验"
+        self.note.setText(summary)
         self.refresh()
 
 
@@ -180,7 +393,7 @@ class PetMixin:
         self._skit_wait: tuple | None = None
         self._skit_id = 0
         self._friend_cd: dict[str, float] = {}
-        self.pet_hit = PetHit(self.chat_panel, self.pat_pet)
+        self.pet_hit = PetHit(self.chat_panel, self.pat_pet, pet_getter=lambda: self.pet)
         self.chat_panel.pet_hit = self.pet_hit
         if self.pet_growth.grant_daily():
             QTimer.singleShot(3000, lambda: self.pet.say("今天的抽卡券到啦 🎟️", 4))
@@ -253,7 +466,7 @@ class PetMixin:
         conv = self.open_dm(pid, select=False)
         ok = self.core.send_event("dm", pid, "pet_visit", {
             "species": self.pet.species, "name": g.name, "level": g.level, "wear": list(g.wear),
-            "owner": self.me.get("nick", "")})
+            "coat": g.coat, "eyes": g.eyes, "owner": self.me.get("nick", "")})
         if not ok:
             return
         self.pet_away = {"peer": pid, "nick": peer.get("nick", ""), "until": time.monotonic() + VISIT_SECS + 30}
@@ -271,16 +484,18 @@ class PetMixin:
             return
         species = data.get("species") if data.get("species") in SPECIES else "cat"
         try:
-            level = max(1, min(30, int(data.get("level", 1))))
+            level = max(1, min(PET_MAX_LEVEL, int(data.get("level", 1))))
         except (TypeError, ValueError):
             level = 1
         name = str(data.get("name") or "团团")[:8]
         wear = [w for w in (data.get("wear") or []) if isinstance(w, str) and w in ACC_BY_ID][:8]
         owner = d["nick"]
+        coat = data.get("coat") if data.get("coat") in COAT_BY_ID else "classic"
+        eyes = data.get("eyes") if data.get("eyes") in EYE_BY_ID else "obsidian"
         v = TypingPet(self.chat_panel)
         v.visitor = True
         v.set_species(species)
-        v.growth = PetGrowth({"xp": xp_for_level(level)})
+        v.growth = PetGrowth({"xp": xp_for_level(level), "coat": coat, "eyes": eyes})
         v.growth.wear = wear
         v.label = f"{owner[:6]}家的{name} Lv.{level}"
         v.show_combo = False
@@ -508,17 +723,20 @@ class PetMixin:
 
     def my_pet_info(self) -> dict:
         g = self.pet_growth
-        return {"species": self.pet.species, "name": g.name, "level": g.level, "wear": list(g.wear)}
+        return {"species": self.pet.species, "name": g.name, "level": g.level, "wear": list(g.wear),
+                "coat": g.coat, "eyes": g.eyes}
 
     @staticmethod
     def clean_pet_info(data) -> dict:
         d = data if isinstance(data, dict) else {}
         try:
-            level = max(1, min(30, int(d.get("level", 1))))
+            level = max(1, min(PET_MAX_LEVEL, int(d.get("level", 1))))
         except (TypeError, ValueError):
             level = 1
         return {"species": d.get("species") if d.get("species") in SPECIES else "cat",
                 "name": str(d.get("name") or "团团")[:8], "level": level,
+                "coat": d.get("coat") if d.get("coat") in COAT_BY_ID else "classic",
+                "eyes": d.get("eyes") if d.get("eyes") in EYE_BY_ID else "obsidian",
                 "wear": [w for w in (d.get("wear") or []) if isinstance(w, str) and w in ACC_BY_ID][:8]}
 
     def friend_bonus(self, pid: str, nick: str, amount: int, pet: dict | None = None) -> None:
@@ -543,7 +761,8 @@ class PetMixin:
         v = TypingPet(parent)
         v.visitor = True
         v.set_species(info_["species"])
-        v.growth = PetGrowth({"xp": xp_for_level(info_["level"])})
+        v.growth = PetGrowth({"xp": xp_for_level(info_["level"]),
+                              "coat": info_.get("coat", "classic"), "eyes": info_.get("eyes", "obsidian")})
         v.growth.owned = {f"acc:{w}" for w in info_["wear"]}
         v.growth.wear = list(info_["wear"])
         v.show_combo = False

@@ -9,11 +9,11 @@ import os
 import re
 import time
 
-from PySide6.QtCore import QRectF, QSize, QStandardPaths, QTimer, Qt
-from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
+from PySide6.QtCore import QPointF, QRectF, QSize, QStandardPaths, QTimer, Qt, Signal
+from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import (
-    QAbstractButton, QApplication, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit,
-    QVBoxLayout, QWidget,
+    QAbstractButton, QApplication, QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
+    QPlainTextEdit, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from . import imaging, theme
@@ -463,28 +463,95 @@ class LogoutDialog(Dialog):
         return self.stickers.isChecked()
 
 
+def compose_collage(images: list[QImage], canvas_w: int = 1080) -> QImage | None:
+    """把 2~9 张静态图合成一张圆角九宫格相册图。"""
+    imgs = [im for im in images if im is not None and not im.isNull()][:9]
+    if not imgs:
+        return None
+    if len(imgs) == 1:
+        return imgs[0]
+    cols = 2 if len(imgs) <= 4 else 3
+    rows = (len(imgs) + cols - 1) // cols
+    gap = 12
+    pad = 16
+    cell = (canvas_w - 2 * pad - (cols - 1) * gap) // cols
+    canvas_h = 2 * pad + rows * cell + (rows - 1) * gap
+    out = QImage(canvas_w, canvas_h, QImage.Format.Format_ARGB32_Premultiplied)
+    out.fill(QColor("#161922" if theme.is_dark() else "#F4F6FB"))
+    p = QPainter(out)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+    for idx, im in enumerate(imgs):
+        r, c = idx // cols, idx % cols
+        x = pad + c * (cell + gap)
+        y = pad + r * (cell + gap)
+        # 最后一行若只有 1 张且 2 列时铺满整行更美观
+        w = cell
+        if len(imgs) == 3 and idx == 2:
+            w = cell * 2 + gap
+        scaled = im.scaled(w, cell, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                           Qt.TransformationMode.SmoothTransformation)
+        sx = max(0, (scaled.width() - w) // 2)
+        sy = max(0, (scaled.height() - cell) // 2)
+        cropped = scaled.copy(sx, sy, w, cell)
+        clip = QPainterPath()
+        clip.addRoundedRect(QRectF(x, y, w, cell), 18, 18)
+        p.save()
+        p.setClipPath(clip)
+        p.drawImage(QRectF(x, y, w, cell), cropped)
+        p.restore()
+    p.end()
+    return out
+
+
 class SendImageDialog(Dialog):
-    def __init__(self, parent, preview: QPixmap, count: int, total: int, burn: int, target: str, bad: int) -> None:
+    def __init__(self, parent, preview: QPixmap, count: int, total: int, burn: int, target: str, bad: int,
+                 thumbs: list[QPixmap] | None = None, can_collage: bool = False) -> None:
         super().__init__(parent, "发送图片")
-        self.setMinimumWidth(400)
+        self.setMinimumWidth(420)
+        self.collage_sw: Switch | None = None
         lay = QVBoxLayout(self)
         lay.setContentsMargins(28, 24, 28, 22)
         lay.setSpacing(8)
         lay.addWidget(label("发送图片" if count == 1 else f"发送 {count} 张图片", "dialogTitle", center=True))
         lay.addWidget(label(f"到「{target}」", "hint", center=True))
-        lay.addSpacing(10)
-        pic = QLabel()
-        pic.setPixmap(preview)
-        pic.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lay.addWidget(pic, 0, Qt.AlignmentFlag.AlignHCenter)
-        lay.addSpacing(10)
+        lay.addSpacing(8)
+        if thumbs and len(thumbs) >= 2:
+            grid_wrap = QFrame(self)
+            grid_wrap.setObjectName("albumGrid")
+            gl = QGridLayout(grid_wrap)
+            gl.setContentsMargins(4, 4, 4, 4)
+            gl.setSpacing(6)
+            cols = 2 if len(thumbs) <= 4 else 3
+            for idx, pm in enumerate(thumbs[:9]):
+                cell = QLabel(grid_wrap)
+                cell.setPixmap(pm)
+                cell.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                gl.addWidget(cell, idx // cols, idx % cols)
+            lay.addWidget(grid_wrap, 0, Qt.AlignmentFlag.AlignHCenter)
+        else:
+            pic = QLabel(self)
+            pic.setPixmap(preview)
+            pic.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lay.addWidget(pic, 0, Qt.AlignmentFlag.AlignHCenter)
+        if can_collage and count >= 2:
+            card = QFrame(self)
+            card.setObjectName("plainCard")
+            cl = QHBoxLayout(card)
+            cl.setContentsMargins(14, 7, 12, 7)
+            cl.addWidget(label("合并为九宫格相册拼图(单条发出)"))
+            cl.addStretch(1)
+            self.collage_sw = Switch(False, card)
+            cl.addWidget(self.collage_sw)
+            lay.addWidget(card)
+        lay.addSpacing(6)
         lay.addWidget(label(f"{imaging.human_size(total)} · 已压缩,并去掉了照片里的位置、设备等隐私信息",
                             "faint", wrap=True, center=True))
         if bad:
             lay.addWidget(label(f"另有 {bad} 张无法读取,已跳过", "warn", center=True))
         if burn:
             lay.addWidget(label(f"🔥 阅后即焚:对方打开后 {fmt_secs(burn)} 自动删除", "warn", center=True))
-        lay.addSpacing(14)
+        lay.addSpacing(12)
         row = QHBoxLayout()
         row.setSpacing(10)
         row.addWidget(button("取消", "", self.reject))
@@ -493,77 +560,171 @@ class SendImageDialog(Dialog):
         row.addWidget(ok)
         lay.addLayout(row)
 
+    @property
+    def merge_collage(self) -> bool:
+        return bool(self.collage_sw is not None and self.collage_sw.isChecked())
+
+
+class _ZoomCanvas(QWidget):
+    """支持滚轮缩放(25%~500%)、拖拽平移、双击切换 1:1/适应窗口的看图画布。"""
+    clicked = Signal()
+    zoom_changed = Signal(float)
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.img: QImage | None = None
+        self.zoom = 1.0
+        self.pan = QPointF(0.0, 0.0)
+        self._down: QPointF | None = None
+        self._pan_start = QPointF(0.0, 0.0)
+        self._dragged = False
+        self.setMinimumSize(420, 300)
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+
+    def set_image(self, img: QImage | None) -> None:
+        self.img = img
+        self.zoom = 1.0
+        self.pan = QPointF(0.0, 0.0)
+        self.zoom_changed.emit(self.zoom)
+        self.update()
+
+    def set_zoom(self, z: float, anchor: QPointF | None = None) -> None:
+        old = self.zoom
+        new = max(0.25, min(5.0, z))
+        if abs(new - old) < 1e-3:
+            return
+        if anchor is not None and old > 0:
+            c = QPointF(self.width() / 2, self.height() / 2)
+            rel = anchor - c - self.pan
+            self.pan = anchor - c - rel * (new / old)
+        if new <= 1.02:
+            self.pan = QPointF(0.0, 0.0)
+        self.zoom = new
+        self.zoom_changed.emit(self.zoom)
+        self.update()
+
+    def _base_scale(self) -> float:
+        if self.img is None or self.img.isNull() or self.width() <= 0 or self.height() <= 0:
+            return 1.0
+        return min(1.0, (self.width() - 24) / max(1, self.img.width()),
+                   (self.height() - 24) / max(1, self.img.height()))
+
+    def wheelEvent(self, e) -> None:
+        dy = e.angleDelta().y()
+        if dy:
+            pos = e.position() if hasattr(e, "position") else QPointF(self.width() / 2, self.height() / 2)
+            self.set_zoom(self.zoom * (1.18 if dy > 0 else 1 / 1.18), pos)
+            e.accept()
+
+    def mouseDoubleClickEvent(self, e) -> None:
+        if e.button() == Qt.MouseButton.LeftButton:
+            pos = e.position() if hasattr(e, "position") else QPointF(self.width() / 2, self.height() / 2)
+            self.set_zoom(1.0 if self.zoom > 1.08 else 2.0, pos)
+
+    def mousePressEvent(self, e) -> None:
+        if e.button() == Qt.MouseButton.LeftButton:
+            self._down = e.position() if hasattr(e, "position") else QPointF(e.pos())
+            self._pan_start = QPointF(self.pan)
+            self._dragged = False
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+
+    def mouseMoveEvent(self, e) -> None:
+        if self._down is None:
+            return
+        pos = e.position() if hasattr(e, "position") else QPointF(e.pos())
+        delta = pos - self._down
+        if abs(delta.x()) + abs(delta.y()) > 4:
+            self._dragged = True
+            self.pan = self._pan_start + delta
+            self.update()
+
+    def mouseReleaseEvent(self, e) -> None:
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+            was_drag = self._dragged
+            self._down = None
+            self._dragged = False
+            if not was_drag and self.zoom <= 1.02:
+                self.clicked.emit()
+
+    def paintEvent(self, _e) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        p.fillRect(self.rect(), QColor("#0B0B0C"))
+        if self.img is None or self.img.isNull():
+            p.setPen(QColor("#98989D"))
+            p.drawText(QRectF(self.rect()), int(Qt.AlignmentFlag.AlignCenter), "图片无法显示")
+            p.end()
+            return
+        k = self._base_scale() * self.zoom
+        dw, dh = self.img.width() * k, self.img.height() * k
+        cx = self.width() / 2 + self.pan.x()
+        cy = self.height() / 2 + self.pan.y()
+        p.drawImage(QRectF(cx - dw / 2, cy - dh / 2, dw, dh), self.img)
+        p.end()
+
 
 class ImageViewer(Dialog):
-    """查看大图。阅后即焚的图片不能复制或保存,时间到自动关闭。"""
+    """画廊大图查看器:支持滚轮缩放、拖拽平移、左右切换会话内图片;阅后即焚禁止复制保存且到期关闭。"""
 
-    def __init__(self, parent, msg: Msg) -> None:
+    def __init__(self, parent, msg: Msg, gallery: list[Msg] | None = None) -> None:
         super().__init__(parent, "查看图片")
         self.setObjectName("viewer")
-        self.msg = msg
-        self.img = imaging.decode(msg.img)
+        items = [m for m in (gallery or [msg]) if not m.gone and m.img is not None]
+        if msg not in items:
+            items = [msg]
+        self.gallery = [msg] if msg.burn else items
+        self.idx = self.gallery.index(msg) if msg in self.gallery else 0
+        self.msg = self.gallery[self.idx]
+        self.img: QImage | None = None
+        self.gif = None
+
+        scr = (parent.screen() if parent is not None and hasattr(parent, "screen") and parent.screen() is not None
+               else QApplication.primaryScreen())
+        avail = scr.availableGeometry() if scr is not None and hasattr(scr, "availableGeometry") else None
+        self._maxw = int(avail.width() * 0.82) if avail is not None and avail.width() else 960
+        self._maxh = int(avail.height() * 0.80) - 64 if avail is not None and avail.height() else 640
+
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
-        self.view = ClickLabel()
-        self.view.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.view.clicked.connect(self.reject)
-        self.view.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.gif = None
-        gif_info = imaging.gif_meta(msg.img) if msg.mime == "image/gif" else None
-        if self.img is not None and gif_info and gif_info[2] > 1:      # 动图:大图里也会动
-            from .widgets import GifLabel
-            scr = (parent.screen() if parent is not None else QApplication.primaryScreen()).availableGeometry()
-            maxw, maxh = int(scr.width() * 0.82), int(scr.height() * 0.80) - 60
-            gw, gh = gif_info[0], gif_info[1]
-            k = min(1.0, maxw / gw, maxh / gh) if gw and gh else 1.0
-            if max(gw, gh) * k < 240:                       # 很小的动图放大一点再看
-                k = min(maxw / gw, maxh / gh, 240 / max(gw, gh))
-            self.gif = GifLabel(msg.img, max(1, int(gw * k)), max(1, int(gh * k)), radius=0, badge=False)
-            self.gif.clicked.connect(self.reject)
-            self.gif.setCursor(Qt.CursorShape.PointingHandCursor)
-            self.gif.set_active(True)
-            holder = QHBoxLayout(self.view)
-            holder.setContentsMargins(0, 0, 0, 0)
-            holder.addWidget(self.gif, 0, Qt.AlignmentFlag.AlignCenter)
-            self.view.setMinimumSize(max(360, self.gif.width()), max(240, self.gif.height()))
-        elif self.img is not None:
-            scr = (parent.screen() if parent is not None else QApplication.primaryScreen()).availableGeometry()
-            maxw, maxh = int(scr.width() * 0.82), int(scr.height() * 0.80) - 60
-            dpr = max(1.0, self.devicePixelRatioF())
-            pm = QPixmap.fromImage(self.img)
-            if pm.width() > maxw * dpr or pm.height() > maxh * dpr:
-                pm = pm.scaled(int(maxw * dpr), int(maxh * dpr), Qt.AspectRatioMode.KeepAspectRatio,
-                               Qt.TransformationMode.SmoothTransformation)
-            pm.setDevicePixelRatio(dpr)
-            self.view.setPixmap(pm)
-            self.view.setMinimumSize(max(360, int(pm.width() / dpr)), max(240, int(pm.height() / dpr)))
-        else:
-            self.view.setText("图片无法显示")
-            self.view.setObjectName("viewerText")
-            self.view.setMinimumSize(360, 240)
-        lay.addWidget(self.view, 1)
 
-        bar = QFrame()
+        self.stage = QStackedWidget(self)
+        self.canvas = _ZoomCanvas(self.stage)
+        self.canvas.clicked.connect(self.reject)
+        self.canvas.zoom_changed.connect(self._on_zoom_changed)
+        self.gif_page = ClickLabel(self.stage)
+        self.gif_page.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.gif_page.clicked.connect(self.reject)
+        self.gif_holder = QHBoxLayout(self.gif_page)
+        self.gif_holder.setContentsMargins(0, 0, 0, 0)
+        self.stage.addWidget(self.canvas)
+        self.stage.addWidget(self.gif_page)
+        lay.addWidget(self.stage, 1)
+
+        bar = QFrame(self)
         bar.setObjectName("viewerBar")
         bl = QHBoxLayout(bar)
-        bl.setContentsMargins(16, 10, 12, 10)
-        bl.setSpacing(8)
-        size = f"{msg.w}×{msg.h}" if msg.w and msg.h else (f"{gif_info[0]}×{gif_info[1]}" if gif_info else "")
-        if gif_info and gif_info[2] > 1:
-            size = f"动图 · {size} · {gif_info[2]} 帧"
-        who = "我" if msg.mine else msg.nick
-        info_text = "  ·  ".join(x for x in (who, size, imaging.human_size(len(msg.img or b""))) if x)
-        bl.addWidget(label(info_text, "viewerInfo"))
+        bl.setContentsMargins(14, 10, 12, 10)
+        bl.setSpacing(6)
+        self.prev_btn = button("‹", "", lambda: self.step_gallery(-1), 36)
+        self.count_label = label("", "viewerInfo")
+        self.next_btn = button("›", "", lambda: self.step_gallery(1), 36)
+        for w in (self.prev_btn, self.count_label, self.next_btn):
+            bl.addWidget(w)
+        self.info_label = label("", "viewerInfo")
+        bl.addWidget(self.info_label)
         self.burn_label = label("", "viewerBurn")
         bl.addWidget(self.burn_label)
         bl.addStretch(1)
+        self.zout_btn = button("－", "", lambda: self.canvas.set_zoom(self.canvas.zoom / 1.25), 36)
+        self.zreset_btn = button("100%", "", lambda: self.canvas.set_image(self.img), 58)
+        self.zin_btn = button("＋", "", lambda: self.canvas.set_zoom(self.canvas.zoom * 1.25), 36)
+        for w in (self.zout_btn, self.zreset_btn, self.zin_btn):
+            bl.addWidget(w)
         self.copy_btn = button("复制", "", self.copy_image)
         self.save_btn = button("存储为…", "", self.save_image)
-        if msg.burn or self.img is None:
-            for b in (self.copy_btn, self.save_btn):
-                b.setEnabled(False)
-                b.setToolTip("阅后即焚的图片不能复制或保存" if msg.burn else "")
         bl.addWidget(self.copy_btn)
         bl.addWidget(self.save_btn)
         close = button("关闭", "primary", self.reject)
@@ -571,10 +732,85 @@ class ImageViewer(Dialog):
         bl.addWidget(close)
         lay.addWidget(bar)
 
+        self._load_current(initial=True)
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._tick)
         self.timer.start(250)
         self._tick()
+
+    def _on_zoom_changed(self, z: float) -> None:
+        self.zreset_btn.setText(f"{int(round(z * 100))}%")
+
+    def step_gallery(self, delta: int) -> None:
+        if len(self.gallery) <= 1:
+            return
+        self.idx = (self.idx + delta) % len(self.gallery)
+        self.msg = self.gallery[self.idx]
+        self._load_current(initial=False)
+
+    def keyPressEvent(self, e) -> None:
+        k = e.key()
+        if k == Qt.Key.Key_Left and len(self.gallery) > 1:
+            self.step_gallery(-1)
+        elif k == Qt.Key.Key_Right and len(self.gallery) > 1:
+            self.step_gallery(1)
+        elif k in (Qt.Key.Key_Plus, Qt.Key.Key_Equal):
+            self.canvas.set_zoom(self.canvas.zoom * 1.25)
+        elif k == Qt.Key.Key_Minus:
+            self.canvas.set_zoom(self.canvas.zoom / 1.25)
+        elif k == Qt.Key.Key_0:
+            self.canvas.set_image(self.img)
+        else:
+            super().keyPressEvent(e)
+
+    def _load_current(self, initial: bool = False) -> None:
+        msg = self.msg
+        if self.gif is not None:
+            self.gif.set_active(False)
+            self.gif_holder.removeWidget(self.gif)
+            self.gif.deleteLater()
+            self.gif = None
+        self.img = imaging.decode(msg.img)
+        gif_info = imaging.gif_meta(msg.img) if msg.mime == "image/gif" else None
+        is_anim_gif = bool(self.img is not None and gif_info and gif_info[2] > 1)
+        if is_anim_gif:
+            from .widgets import GifLabel
+            gw, gh = gif_info[0], gif_info[1]
+            k = min(1.0, self._maxw / gw, self._maxh / gh) if gw and gh else 1.0
+            if max(gw, gh) * k < 240:
+                k = min(self._maxw / gw, self._maxh / gh, 240 / max(gw, gh))
+            self.gif = GifLabel(msg.img, max(1, int(gw * k)), max(1, int(gh * k)), radius=0, badge=False)
+            self.gif.clicked.connect(self.reject)
+            self.gif.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.gif.set_active(True)
+            self.gif_holder.addWidget(self.gif, 0, Qt.AlignmentFlag.AlignCenter)
+            self.stage.setCurrentIndex(1)
+            if initial:
+                self.resize(max(520, self.gif.width() + 40), max(340, self.gif.height() + 80))
+        else:
+            self.canvas.set_image(self.img)
+            self.stage.setCurrentIndex(0)
+            if initial and self.img is not None:
+                k = min(1.0, self._maxw / max(1, self.img.width()), self._maxh / max(1, self.img.height()))
+                self.resize(max(560, int(self.img.width() * k) + 48), max(380, int(self.img.height() * k) + 90))
+        for b in (self.zout_btn, self.zreset_btn, self.zin_btn):
+            b.setVisible(not is_anim_gif and self.img is not None)
+        multi = len(self.gallery) > 1
+        for w in (self.prev_btn, self.count_label, self.next_btn):
+            w.setVisible(multi)
+        if multi:
+            self.count_label.setText(f"{self.idx + 1} / {len(self.gallery)}")
+        size = f"{msg.w}×{msg.h}" if msg.w and msg.h else (f"{gif_info[0]}×{gif_info[1]}" if gif_info else "")
+        if is_anim_gif:
+            size = f"动图 · {size} · {gif_info[2]} 帧"
+        who = "我" if msg.mine else msg.nick
+        info_text = "  ·  ".join(x for x in (who, size, imaging.human_size(len(msg.img or b""))) if x)
+        self.info_label.setText(info_text)
+        can_save = not msg.burn and self.img is not None
+        for b in (self.copy_btn, self.save_btn):
+            b.setEnabled(can_save)
+            b.setToolTip("阅后即焚的图片不能复制或保存" if msg.burn else "")
+        self.burn_label.setText("")
 
     def _tick(self) -> None:
         m = self.msg

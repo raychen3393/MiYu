@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import random
+import sys
 import time
 
 from PySide6.QtCore import QPoint, QRectF, Qt, QTimer
@@ -20,11 +21,15 @@ from PySide6.QtWidgets import (
 )
 
 from ..dialogs import Dialog, TextDialog, info, prompt
-from ..fun import ACC_BY_ID, ACCESSORIES, OUTFITS, SLOTS, SPECIES, TRICKS, PetGrowth, TypingPet
+from ..fun import (
+    ACC_BY_ID, ACCESSORIES, DYE_PRESETS, OUTFITS, SLOTS, SPECIAL_TRICKS, SPECIES, TRICKS, PetGrowth, TypingPet,
+)
+from ..pet3d import COATS, EYE_STYLES, ROOMS
 from ..petcare import (
     EXPRESSIONS, FOOD_BY_ID, FOODS, FORMS, GP_DAILY_FEEDS, GP_MSG_XP, GP_SPECIES, TOY_BY_ID, TOYS, GroupPet,
     form_of, next_form,
 )
+from ..petpass import PassDialog, SnackCatchDialog, can_checkin
 from ..theme import T
 from ..ui import button, label, make_menu, popup
 from ..widgets import Conv
@@ -34,10 +39,33 @@ GPET_RESEND = 10.0                # 群宠物状态有变化时,最快 10 秒同
 SAY_CD = 6.0                      # 宠物提醒"有新消息"的最短间隔
 THANKS = ("好好吃!谢谢~", "嗷呜,超满足!", "还想要~", "最喜欢你啦!")
 PLAY_SAY = ("好好玩!", "再来再来!", "哈哈哈~", "累了但是开心!")
+DESKTOP_MODES = [("roam", "任务栏自由漫步"), ("peek", "趴在活动窗口顶边"), ("fixed", "固定位置")]
+_GLOBAL_VKS = (0x08, 0x0D, 0x20, *range(0x30, 0x3A), *range(0x41, 0x5B), *range(0xBA, 0xC1), *range(0xDB, 0xE0))
+
+
+def _active_window_rect(ignore_hwnd: int) -> tuple[int, int, int, int] | None:
+    """Windows:获取当前前台活动窗口矩形(用于桌宠趴在窗口顶边偷看)。"""
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        import ctypes.wintypes
+        u32 = ctypes.windll.user32
+        hwnd = u32.GetForegroundWindow()
+        if not hwnd or hwnd == ignore_hwnd or u32.IsIconic(hwnd):
+            return None
+        r = ctypes.wintypes.RECT()
+        if not u32.GetWindowRect(hwnd, ctypes.byref(r)):
+            return None
+        if r.right - r.left < 220 or r.bottom - r.top < 120 or r.top < 10:
+            return None
+        return r.left, r.top, r.right, r.bottom
+    except Exception:
+        return None
 
 
 class DesktopPet(QWidget):
-    """桌面陪伴:窗口最小化时,宠物趴在屏幕角落一个小台子上。左键点它回到密语,按住可以拖动,右键有菜单。"""
+    """3.1 进阶桌宠:支持任务栏自由漫步、趴在活动窗口顶边偷看、固定位置,并可在最小化时响应全局打字节拍。"""
 
     def __init__(self, win) -> None:
         super().__init__(None, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
@@ -49,15 +77,129 @@ class DesktopPet(QWidget):
         self.pet = TypingPet(self)
         self.pet.bare = True
         self.pet.visitor = True
+        self.pet.show_room = True
         self.pet.growth = win.pet_growth
         self.pet.set_species(win.fun.get("pet") or "cat")
         self.pet.move(0, 0)
-        self.setToolTip("点我回到密语 · 按住拖动 · 右键更多")
+        self.setToolTip("点我回到密语 · 按住拖动 · 右键切换漫步/偷看模式、签到、小游戏")
         self._press: QPoint | None = None
         self._moved = False
+        self._vx = 1.6
+        self._pause_until = 0.0
+        self._sprint_until = 0.0
+        self._prev_down: set[int] = set()
+        self._roam_timer = QTimer(self)
+        self._roam_timer.setInterval(36)
+        self._roam_timer.timeout.connect(self._roam_step)
+        self._key_timer = QTimer(self)
+        self._key_timer.setInterval(40)
+        self._key_timer.timeout.connect(self._poll_global_keys)
+
+    def showEvent(self, e) -> None:
+        super().showEvent(e)
+        self._prev_down.clear()
+        self._roam_timer.start()
+        if sys.platform == "win32" and getattr(self.win, "desktop_global_keys", True):
+            self._key_timer.start()
+
+    def hideEvent(self, e) -> None:
+        super().hideEvent(e)
+        self._roam_timer.stop()
+        self._key_timer.stop()
+        self._prev_down.clear()
+
+    def sync_timers(self) -> None:
+        if not self.isVisible():
+            return
+        if sys.platform == "win32" and getattr(self.win, "desktop_global_keys", True):
+            if not self._key_timer.isActive():
+                self._key_timer.start()
+        else:
+            self._key_timer.stop()
+
+    def notify_msg(self) -> None:
+        """有新消息时叼着信封冲刺提醒。"""
+        self._sprint_until = time.monotonic() + 2.4
+        self._pause_until = 0.0
+        self.pet.alert()
+        self.pet.say("✉️ 有新消息~", 3.2)
+
+    def _screen_rect(self) -> tuple[int, int, int, int]:
+        try:
+            geo = QGuiApplication.primaryScreen().availableGeometry()
+            return geo.x(), geo.y(), geo.width(), geo.height()
+        except Exception:
+            return 0, 0, 1280, 720
+
+    def _roam_step(self) -> None:
+        if not self.isVisible() or self._press is not None:
+            return
+        mode = getattr(self.win, "desktop_mode", "roam")
+        if mode == "fixed":
+            return
+        gx, gy, gw, gh = self._screen_rect()
+        now = time.monotonic()
+        if mode == "peek":
+            try:
+                my_hwnd = int(self.winId())
+            except Exception:
+                my_hwnd = 0
+            rect = _active_window_rect(my_hwnd)
+            if rect is not None:
+                l, t, r, _b = rect
+                tx = max(gx, min(gx + gw - self.width(), r - self.width() - 48))
+                ty = max(gy, t - TypingPet.EDGE + 2)
+                nx = int(self.x() + (tx - self.x()) * 0.22)
+                ny = int(self.y() + (ty - self.y()) * 0.22)
+                self.move(nx, ny)
+                return
+        # 任务栏上方自由漫步
+        base_y = gy + gh - TypingPet.H - 6
+        if now < self._pause_until:
+            return
+        speed = 4.6 if now < self._sprint_until else 1.35
+        nx = self.x() + (speed if self._vx >= 0 else -speed)
+        lo, hi = gx + 12, gx + gw - self.width() - 12
+        if nx <= lo:
+            nx, self._vx = lo, abs(self._vx)
+            self._pause_until = now + random.uniform(1.0, 2.8)
+        elif nx >= hi:
+            nx, self._vx = hi, -abs(self._vx)
+            self._pause_until = now + random.uniform(1.0, 2.8)
+        elif now > self._sprint_until and random.random() < 0.008:
+            self._pause_until = now + random.uniform(1.6, 4.2)
+            if random.random() < 0.35:
+                self._vx = -self._vx
+        self.pet.mirror = self._vx < 0
+        ny = int(self.y() + (base_y - self.y()) * 0.18)
+        self.move(int(nx), ny)
+
+    def _poll_global_keys(self) -> None:
+        """隐私友好:仅检测敲击节拍(不记录任何按键字符),让最小化后的桌宠也能跟着主人打字拍爪!"""
+        if not self.isVisible() or not getattr(self.win, "desktop_global_keys", True):
+            return
+        try:
+            import ctypes
+            u32 = ctypes.windll.user32
+            hit_kind = None
+            down_now: set[int] = set()
+            for vk in _GLOBAL_VKS:
+                if u32.GetAsyncKeyState(vk) & 0x8000:
+                    down_now.add(vk)
+                    if vk not in self._prev_down:
+                        hit_kind = "delete" if vk == 0x08 else ("enter" if vk == 0x0D else ("space" if vk == 0x20 else "char"))
+            self._prev_down = down_now
+            if hit_kind is not None:
+                self.pet.tap(hit_kind)
+                if hasattr(self.win, "on_desktop_keybeat"):
+                    self.win.on_desktop_keybeat(hit_kind)
+        except Exception:
+            pass
 
     def paintEvent(self, _e) -> None:
-        """宠物下面的小台子(代替聊天窗口里的输入框边缘)。"""
+        """宠物下面的小台子(如果开了 2.5D 小窝场景则由小窝自己渲染底座)。"""
+        if getattr(self.pet.growth, "room", "none") != "none":
+            return
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         cx = self.pet._cx()
@@ -92,6 +234,22 @@ class DesktopPet(QWidget):
     def contextMenuEvent(self, e) -> None:
         m = make_menu(self)
         m.addAction("🤚  摸摸", self.pet.pat)
+        mode_menu = make_menu(m)
+        mode_menu.setTitle("🚶  桌宠行为模式")
+        cur_m = getattr(self.win, "desktop_mode", "roam")
+        for mid, mlabel in DESKTOP_MODES:
+            a = mode_menu.addAction(mlabel, lambda k=mid: self.win.set_desktop_mode(k))
+            a.setCheckable(True)
+            a.setChecked(cur_m == mid)
+        m.addMenu(mode_menu)
+        gk = m.addAction("⌨  响应全局打字节拍(不记录按键内容)")
+        gk.setCheckable(True)
+        gk.setChecked(bool(getattr(self.win, "desktop_global_keys", True)))
+        gk.triggered.connect(self.win.set_desktop_global_keys)
+        m.addSeparator()
+        m.addAction("🎁  每日签到与通行证…", lambda: (self.win.restore_from_desktop(), self.win.show_pet_pass()))
+        m.addAction("🎮  接零食小游戏…", lambda: (self.win.restore_from_desktop(), self.win.show_snack_game()))
+        m.addAction("👗  2.5D 潮玩衣橱…", lambda: (self.win.restore_from_desktop(), self.win.show_wardrobe()))
         m.addAction("回到密语", self.win.restore_from_desktop)
         m.addSeparator()
         m.addAction("关闭桌面陪伴", lambda: self.win.set_desktop_pet(False))
@@ -106,23 +264,40 @@ class WardrobeDialog(Dialog):
         self.win = win
         g = self.g = win.pet_growth
         g.care()
-        self.setFixedWidth(720)
+        self.setFixedWidth(760)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(24, 20, 24, 18)
         lay.setSpacing(10)
-        lay.addWidget(label(f"{g.name} 的衣橱", "dialogTitle"))
+        head_row = QHBoxLayout()
+        head_row.addWidget(label(f"{g.name} 的 2.5D 潮玩衣橱", "dialogTitle"))
+        head_row.addStretch(1)
+        self.sp_btns: dict[str, QPushButton] = {}
+        for skey, sspec in SPECIES.items():
+            sb = QPushButton(sspec["label"])
+            sb.setObjectName("tab")
+            sb.setCheckable(True)
+            sb.setChecked((win.fun.get("pet") or "cat") == skey)
+            sb.setCursor(Qt.CursorShape.PointingHandCursor)
+            sb.clicked.connect(lambda _=False, k=skey: self.pick_species(k))
+            head_row.addWidget(sb)
+            self.sp_btns[skey] = sb
+        lay.addLayout(head_row)
 
         top = QHBoxLayout()
         stage = QFrame()
         stage.setObjectName("plainCard")
-        stage.setFixedSize(TypingPet.W + 8, TypingPet.H + 18)
+        stage.setFixedSize(TypingPet.W + 12, TypingPet.H + 22)
         self.preview = TypingPet(stage)
         self.preview.bare = True
         self.preview.centered = True
         self.preview.visitor = True
+        self.preview.show_room = True
         self.preview.growth = g
         self.preview.set_species(win.pet.species)
-        self.preview.move(4, 4)
+        self.preview.move(6, 8)
+        self.preview_hit = PetHit(stage, self.preview.pat, tip="轻点摸摸 · 按住拖拽可 Q 弹捏脸!",
+                                  pet_getter=lambda: self.preview)
+        self.preview_hit.setGeometry(6, 8, TypingPet.W, TypingPet.H)
         top.addWidget(stage)
         col = QVBoxLayout()
         col.setSpacing(4)
@@ -153,11 +328,15 @@ class WardrobeDialog(Dialog):
         self.tab_btns: list[QPushButton] = []
         self.item_btns: dict[str, QPushButton] = {}
         self.expr_btns: dict[str, QPushButton] = {}
+        self.coat_btns: dict[str, QPushButton] = {}
+        self.eye_btns: dict[str, QPushButton] = {}
+        self.room_btns: dict[str, QPushButton] = {}
         self.outfit_rows: dict[str, tuple] = {}
         self.trick_btns: dict[str, QPushButton] = {}
         pages = [(name, self._acc_page(slot)) for slot, name in SLOTS]
-        pages += [("套装", self._outfit_page()), ("动作", self._trick_page()), ("表情", self._expr_page()),
-                  ("形态", self._form_page())]
+        pages += [("套装", self._outfit_page()), ("染色", self._dye_page()), ("毛色", self._coat_page()),
+                  ("瞳色", self._eye_page()), ("小窝", self._room_page()), ("动作", self._trick_page()),
+                  ("表情", self._expr_page()), ("形态", self._form_page())]
         tabs2 = QHBoxLayout()
         tabs2.setSpacing(2)
         for i, (name, page) in enumerate(pages):
@@ -178,6 +357,8 @@ class WardrobeDialog(Dialog):
         self.tip = label("", "faint", wrap=True)
         lay.addWidget(self.tip)
         row = QHBoxLayout()
+        row.addWidget(button("🎁 每日签到 / 通行证", "", self.win.show_pet_pass, 146))
+        row.addWidget(button("🎮 接零食小游戏", "", self.win.show_snack_game, 126))
         row.addStretch(1)
         row.addWidget(button("完成", "primary", self.accept, 90))
         lay.addLayout(row)
@@ -235,16 +416,68 @@ class WardrobeDialog(Dialog):
 
     def _trick_page(self) -> QWidget:
         page, grid = self._grid_page()
-        for i, (need, tid, name, _dur) in enumerate(TRICKS):
+        all_items = [(need, tid, name, False) for need, tid, name, _d in TRICKS]
+        all_items += [(0, tid, name, True) for tid, name, _d in SPECIAL_TRICKS]
+        for i, (_need, tid, name, _sp) in enumerate(all_items):
             b = QPushButton(name)
             b.setObjectName("choice")
-            b.setMinimumHeight(40)
+            b.setMinimumHeight(38)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             b.clicked.connect(lambda _=False, t=tid: self.play_trick(t))
             grid.addWidget(b, i // 5, i % 5)
             self.trick_btns[tid] = b
-        grid.setRowStretch(3, 1)
+        grid.setRowStretch(4, 1)
         return page
+
+    def _dye_page(self) -> QWidget:
+        """3.1 装扮自由染色:选择部位 + 12 色预设调色盘。"""
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(0, 4, 0, 0)
+        lay.setSpacing(8)
+        self._dye_slot = "body"
+        slot_row = QHBoxLayout()
+        slot_row.setSpacing(4)
+        self.dye_slot_btns: dict[str, QPushButton] = {}
+        for sk, sname in (("head", "头饰"), ("ear", "耳边"), ("face", "脸上"), ("neck", "脖子"), ("body", "衣服"), ("hand", "手持")):
+            sb = QPushButton(sname)
+            sb.setObjectName("tab")
+            sb.setCheckable(True)
+            sb.setChecked(sk == self._dye_slot)
+            sb.setCursor(Qt.CursorShape.PointingHandCursor)
+            sb.clicked.connect(lambda _=False, s=sk: self._pick_dye_slot(s))
+            slot_row.addWidget(sb)
+            self.dye_slot_btns[sk] = sb
+        slot_row.addStretch(1)
+        lay.addLayout(slot_row)
+
+        grid = QGridLayout()
+        grid.setSpacing(6)
+        self.dye_color_btns: dict[str, QPushButton] = {}
+        for i, (hex_c, cname) in enumerate(DYE_PRESETS):
+            b = QPushButton(f"● {cname}" if hex_c else f"↩ {cname}")
+            b.setObjectName("choice")
+            b.setCheckable(True)
+            b.setMinimumHeight(38)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            if hex_c:
+                b.setStyleSheet(f"QPushButton {{ color: {hex_c}; font-weight: 600; }}")
+            b.clicked.connect(lambda _=False, c=hex_c: self.set_dye(c))
+            grid.addWidget(b, i // 4, i % 4)
+            self.dye_color_btns[hex_c] = b
+        lay.addLayout(grid)
+        lay.addStretch(1)
+        return page
+
+    def _pick_dye_slot(self, slot: str) -> None:
+        self._dye_slot = slot
+        for sk, b in self.dye_slot_btns.items():
+            b.setChecked(sk == slot)
+        self.refresh(keep_tip=True)
+
+    def set_dye(self, color: str) -> None:
+        self.g.set_dye(self._dye_slot, color)
+        self.refresh(keep_tip=True)
 
     def wear_outfit(self, oid: str) -> None:
         missing = self.g.wear_outfit(oid)
@@ -269,6 +502,48 @@ class WardrobeDialog(Dialog):
         grid.setRowStretch(2, 1)
         return page
 
+    def _coat_page(self) -> QWidget:
+        page, grid = self._grid_page()
+        for i, (cid, name, _lv) in enumerate(COATS):
+            b = QPushButton(name)
+            b.setObjectName("choice")
+            b.setCheckable(True)
+            b.setMinimumHeight(40)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.clicked.connect(lambda _=False, c=cid: self.set_coat(c))
+            grid.addWidget(b, i // 4, i % 4)
+            self.coat_btns[cid] = b
+        grid.setRowStretch(3, 1)
+        return page
+
+    def _eye_page(self) -> QWidget:
+        page, grid = self._grid_page()
+        for i, (eid, name, _lv, _cols) in enumerate(EYE_STYLES):
+            b = QPushButton(name)
+            b.setObjectName("choice")
+            b.setCheckable(True)
+            b.setMinimumHeight(40)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.clicked.connect(lambda _=False, e=eid: self.set_eyes(e))
+            grid.addWidget(b, i // 4, i % 4)
+            self.eye_btns[eid] = b
+        grid.setRowStretch(2, 1)
+        return page
+
+    def _room_page(self) -> QWidget:
+        page, grid = self._grid_page()
+        for i, (rid, name, _lv) in enumerate(ROOMS):
+            b = QPushButton(name)
+            b.setObjectName("choice")
+            b.setCheckable(True)
+            b.setMinimumHeight(40)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.clicked.connect(lambda _=False, r=rid: self.set_room(r))
+            grid.addWidget(b, i // 4, i % 4)
+            self.room_btns[rid] = b
+        grid.setRowStretch(2, 1)
+        return page
+
     def _form_page(self) -> QWidget:
         page = QWidget()
         col = QVBoxLayout(page)
@@ -282,8 +557,22 @@ class WardrobeDialog(Dialog):
         return page
 
     TIPS = {"套装": "一键穿上套装里已经解锁的部件;集齐整套,身后会有一圈套装颜色的光。",
+            "染色": "自由给帽子、衣服、丝带、掌机、吉他等装扮染色,打造独一无二的配色!",
+            "毛色": "基因花色:暹罗挖煤脸、三花斑点、黑白奶牛、樱花奶霜等,串门和拍合照时朋友也能看到。",
+            "瞳色": "更换 3D 虹膜颜色,Lv.12 解锁超人气的蓝金「鸳鸯异瞳」。",
+            "小窝": "微缩 2.5D 景深小窝底座,在衣橱和「桌面陪伴」里生效(阳光软垫的窗外会随日夜变化)。",
             "动作": "每 5 级学会一个新动作。宠物闲着时会自己表演,在这里点一下马上表演。",
-            "表情": "平时的表情。", "形态": "10 级长大,20 级第一次进化,30 级传说期,40 级第二次进化(神话期)。"}
+            "表情": "平时的表情。把鼠标移到上方预览区,TA 会跟着你的鼠标立体转头,按住脸颊还能捏脸!",
+            "形态": "10 级长大,20 级第一次进化,30 级传说期,40 级第二次进化(神话期)。"}
+
+    def pick_species(self, skey: str) -> None:
+        if skey not in SPECIES:
+            return
+        self.win.set_fun("pet", skey)
+        self.preview.set_species(skey)
+        for k, b in self.sp_btns.items():
+            b.setChecked(k == skey)
+        self.refresh(keep_tip=True)
 
     def show_tab(self, i: int) -> None:
         self.stack.setCurrentIndex(i)
@@ -298,6 +587,18 @@ class WardrobeDialog(Dialog):
 
     def set_expr(self, eid: str) -> None:
         self.g.set_expr(eid)
+        self.refresh()
+
+    def set_coat(self, cid: str) -> None:
+        self.g.set_coat(cid)
+        self.refresh()
+
+    def set_eyes(self, eid: str) -> None:
+        self.g.set_eyes(eid)
+        self.refresh()
+
+    def set_room(self, rid: str) -> None:
+        self.g.set_room(rid)
         self.refresh()
 
     def refresh(self, keep_tip: bool = False) -> None:
@@ -322,18 +623,47 @@ class WardrobeDialog(Dialog):
             parts_lab.setText("  ".join(bits) + ("\n✨ 已集齐" if full is not None and full[0] == oid else ""))
             btn.setEnabled(any(g.is_unlocked(aid) for aid in o[2]))
         for tid, b in self.trick_btns.items():
-            need, _t, name, _d = next(x for x in TRICKS if x[1] == tid)
-            ok = g.level >= need
-            b.setEnabled(ok)
-            b.setText(f"🎭 {name}" if ok else f"🔒 {name}  Lv.{need}")
+            if tid in {t[1] for t in TRICKS}:
+                need, _t, name, _d = next(x for x in TRICKS if x[1] == tid)
+                ok = g.level >= need
+                b.setEnabled(ok)
+                b.setText(f"🎭 {name}" if ok else f"🔒 {name} Lv.{need}")
+            else:
+                _tid, name, _d = next(x for x in SPECIAL_TRICKS if x[0] == tid)
+                ok = g.has_trick(tid)
+                b.setEnabled(ok)
+                b.setText(f"✨ {name}" if ok else f"🔒 {name}(通行证)")
+        cur_dye = g.dye.get(getattr(self, "_dye_slot", "body"), "")
+        for hex_c, b in getattr(self, "dye_color_btns", {}).items():
+            b.setChecked(hex_c == cur_dye)
         for eid, b in self.expr_btns.items():
             ok = g.can_use("expr", eid)
             name, lv = next((e[1], e[2]) for e in EXPRESSIONS if e[0] == eid)
             b.setEnabled(ok)
             b.setChecked(g.expr == eid)
             b.setText(name if ok else f"🔒 {name}  Lv.{lv}")
+        for cid, b in self.coat_btns.items():
+            ok = g.can_use("coat", cid)
+            name, lv = next((c[1], c[2]) for c in COATS if c[0] == cid)
+            b.setEnabled(ok)
+            b.setChecked(g.coat == cid)
+            b.setText(name if ok else f"🔒 {name}  Lv.{lv}")
+        for eid, b in self.eye_btns.items():
+            ok = g.can_use("eyes", eid)
+            name, lv = next((e[1], e[2]) for e in EYE_STYLES if e[0] == eid)
+            b.setEnabled(ok)
+            b.setChecked(g.eyes == eid)
+            b.setText(name if ok else f"🔒 {name}  Lv.{lv}")
+        for rid, b in self.room_btns.items():
+            ok = g.can_use("room", rid)
+            name, lv = next((r[1], r[2]) for r in ROOMS if r[0] == rid)
+            b.setEnabled(ok)
+            b.setChecked(g.room == rid)
+            b.setText(name if ok else f"🔒 {name}  Lv.{lv}")
         self.preview.update()
         self.win.pet.update()
+        if self.win.desktop_win is not None:
+            self.win.desktop_win.update()
 
 
 class PetLifeMixin:
@@ -348,6 +678,8 @@ class PetLifeMixin:
         self._care_said = time.monotonic()
         self._last_lv = 0
         self.desktop_pet_on = False
+        self.desktop_mode = "roam"                   # roam(任务栏漫步) / peek(趴在活动窗口顶边) / fixed(固定)
+        self.desktop_global_keys = True              # 最小化桌面陪伴时响应全局打字节拍(不记录字符)
         self.desktop_pos: list[int] | None = None
         self.desktop_win: DesktopPet | None = None
         self.pet_hit.on_menu = self.pet_menu
@@ -356,13 +688,19 @@ class PetLifeMixin:
         self.gpet.visitor = True
         self.gpet.show_combo = False
         self.gpet.hide()
-        self.gpet_hit = PetHit(self.chat_panel, self.pat_gpet, self.gpet_menu, "群宠物:左键摸摸 · 右键喂它、改名、贡献榜")
+        self.gpet_hit = PetHit(self.chat_panel, self.pat_gpet, self.gpet_menu,
+                               "群宠物:左键摸摸 · 按住捏脸 · 右键喂它、改名、贡献榜", pet_getter=lambda: self.gpet)
         self.gpet_hit.hide()
         self.pet_growth.care()
         self._sync_level()
 
     def _restore_petlife(self, acct: dict, st: dict) -> None:
         self.desktop_pet_on = bool(st.get("desktop_pet", False))
+        dm = st.get("desktop_mode")
+        if dm in ("roam", "peek", "fixed"):
+            self.desktop_mode = dm
+        if "desktop_global_keys" in st:
+            self.desktop_global_keys = bool(st.get("desktop_global_keys", True))
         pos = st.get("desktop_pos")
         if isinstance(pos, list) and len(pos) == 2 and all(type(v) is int for v in pos):
             self.desktop_pos = pos
@@ -377,7 +715,8 @@ class PetLifeMixin:
         return {"gpets": {tag: gp.to_dict() for tag, gp in self.gpets.items() if tag in self.room_keys}}
 
     def _settings_petlife(self) -> dict:
-        return {"desktop_pet": self.desktop_pet_on, "desktop_pos": self.desktop_pos}
+        return {"desktop_pet": self.desktop_pet_on, "desktop_pos": self.desktop_pos,
+                "desktop_mode": self.desktop_mode, "desktop_global_keys": self.desktop_global_keys}
 
     def _tick_petlife(self, now: float) -> None:
         if self._save_tick % 5 == 0:
@@ -437,10 +776,11 @@ class PetLifeMixin:
         now = time.monotonic()
         if not self.window_visible():
             if self.desktop_win is not None and self.desktop_win.isVisible() and not conv.muted:
-                self.desktop_win.pet.alert()
                 if now - self._say_t >= SAY_CD:
                     self._say_t = now
-                    self.desktop_win.pet.say("有新消息~", 3)      # 桌面上不显示是谁发的,免得被旁人看到
+                    self.desktop_win.notify_msg()
+                else:
+                    self.desktop_win.pet.alert()
             return
         if not self.fun.get("pet") or self.pet_away:
             return
@@ -505,11 +845,20 @@ class PetLifeMixin:
                 show.addAction(name, lambda t=tid: self.pet.trick(t))
             else:
                 show.addAction(f"🔒 {name}  ·  Lv.{need} 学会").setEnabled(False)
+        show.addSeparator()
+        for tid, name, _dur in SPECIAL_TRICKS:
+            if g.has_trick(tid):
+                show.addAction(f"✨ {name}", lambda t=tid: self.pet.trick(t))
+            else:
+                show.addAction(f"🔒 {name}  ·  签到/通行证解锁").setEnabled(False)
         m.addMenu(show)
         m.addSeparator()
-        m.addAction("👗  衣橱和形态…", self.show_wardrobe)
+        ci_tag = "  🔴 可签到" if can_checkin(g) else ""
+        m.addAction(f"🎁  每日签到与萌宠通行证…{ci_tag}", self.show_pet_pass)
+        m.addAction("🎮  接零食大作战…", self.show_snack_game)
+        m.addAction("👗  衣橱、染色与形态…", self.show_wardrobe)
         m.addAction("📔  宠物日记", self.show_diary)
-        act = m.addAction("🖥  桌面陪伴(窗口最小化时宠物留在桌面角落)")
+        act = m.addAction("🖥  桌面陪伴(最小化时在桌面漫步陪你打字)")
         act.setCheckable(True)
         act.setChecked(self.desktop_pet_on)
         act.triggered.connect(self.set_desktop_pet)
@@ -708,11 +1057,42 @@ class PetLifeMixin:
         extra = f",进入「{fname}」!" if FORMS[idx][0] == lv and lv > 1 else ""
         self._system(conv, f"🎉 群宠物 {gp.name[0]} 升到 Lv.{lv} 了{extra}")
 
-    # ---------------------------------------------------------------- 桌面陪伴
+    # ---------------------------------------------------------------- 桌面陪伴 / 签到与小游戏
+    def show_pet_pass(self) -> None:
+        PassDialog(self).exec()
+        self.pet.update()
+        if self.desktop_win is not None:
+            self.desktop_win.update()
+
+    def show_snack_game(self) -> None:
+        SnackCatchDialog(self).exec()
+        self.pet.update()
+        if self.desktop_win is not None:
+            self.desktop_win.update()
+
+    def set_desktop_mode(self, mode: str) -> None:
+        if mode in ("roam", "peek", "fixed"):
+            self.desktop_mode = mode
+            if self.desktop_win is not None and self.desktop_win.isVisible():
+                self.desktop_win.pet.say({"roam": "我去任务栏散步啦~", "peek": "趴在窗口边偷看你!", "fixed": "我乖乖待在这里~"}[mode], 2.2)
+
+    def set_desktop_global_keys(self, on: bool) -> None:
+        self.desktop_global_keys = bool(on)
+        if self.desktop_win is not None:
+            self.desktop_win.sync_timers()
+
+    def on_desktop_keybeat(self, kind: str) -> None:
+        """桌面陪伴期间收到全局打字节拍:增加宠物经验与敲击数。"""
+        if self.pet_growth.tap():
+            self._pet_level_up()
+            if self.desktop_win is not None:
+                self.desktop_win.pet.celebrate()
+                self.desktop_win.pet.say(f"升到 Lv.{self.pet_growth.level} 啦! 🎉", 3.0)
+
     def set_desktop_pet(self, on: bool) -> None:
         self.desktop_pet_on = bool(on)
         if on and not self.isMinimized():
-            self.pet.say("最小化窗口时,我会趴到桌面角落陪你~", 3.5)
+            self.pet.say("最小化窗口时,我会在任务栏散步并陪你打字~", 3.5)
         self.desktop_pet_sync()
 
     def desktop_pet_sync(self) -> None:

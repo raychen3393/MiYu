@@ -41,9 +41,11 @@ HEAT_COLORS.update({
     "sakura": ("#FF8A8A", "#FF5FA2", "#FFB86B"),
     "violet": ("#FF6A9A", "#D946EF", "#FFB454"),
     "ocean": ("#38BDF8", "#F472B6", "#FBBF24"),
+    "terminal": ("#2EA043", "#58A6FF", "#3FB950"),
     "black": ("#FF5F38", "#FF3F86", "#FFAA33"),
 })
-HEAT_ALPHA = {"light": 0.42, "sakura": 0.40, "dusk": 0.46, "violet": 0.40, "ocean": 0.36, "dark": 0.40, "black": 0.32}
+HEAT_ALPHA = {"light": 0.42, "sakura": 0.40, "dusk": 0.46, "violet": 0.40, "ocean": 0.36, "dark": 0.40,
+              "terminal": 0.24, "black": 0.32}
 HIT_BG, HIT_FG = "#FFE066", "#1D1D1F"
 BURN_CHOICES = [("关闭", 0), ("10 秒", 10), ("30 秒", 30), ("1 分钟", 60), ("5 分钟", 300)]
 AVATAR_COLORS = ["#6C8EBF", "#C9956B", "#7BA67A", "#9B87C4", "#C67D8F", "#64A6B0", "#B59E66", "#7E9C93"]
@@ -121,6 +123,97 @@ def highlight_html(text: str, query: str) -> str:
         i = j + len(q)
     out.append(html.escape(soft_wrap(text[i:])))
     return "".join(out).replace("\n", "<br>")
+
+
+_FENCE_RE = re.compile(r"```([A-Za-z0-9_+#.-]{0,18})[ \t]*\r?\n(.*?)```", re.DOTALL)
+_INLINE_CODE_RE = re.compile(r"`([^`\r\n]{1,180})`")
+_CODE_TOKEN_RE = re.compile(
+    r'(?P<comment>#[^\n]*|//[^\n]*|/\*[\s\S]*?\*/)'
+    r'|(?P<string>"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\'|"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\')'
+    r'|(?P<deco>@[A-Za-z_]\w*)'
+    r'|(?P<kw>\b(?:def|class|return|import|from|as|if|elif|else|for|while|break|continue|try|except|finally|with|'
+    r'raise|yield|lambda|pass|async|await|in|not|and|or|is|global|nonlocal|const|let|var|function|export|default|'
+    r'new|switch|case|struct|enum|impl|fn|pub|mut|match|use|package|func|go|defer|interface|type|public|private|'
+    r'protected|static|void|int|float|double|bool|string|SELECT|FROM|WHERE|INSERT|UPDATE|DELETE|JOIN|ORDER|GROUP|BY)\b)'
+    r'|(?P<lit>\b(?:True|False|None|true|false|null|undefined|self|this|super)\b|\b\d+(?:\.\d+)?\b)'
+)
+
+
+def parse_markdown_blocks(text: str) -> list[tuple[str, str, str]]:
+    """把含 ``` 代码块的消息拆成 [('text', '', 文本), ('code', 语言, 代码), ...]。全程纯解析不执行 HTML。"""
+    if "```" not in text:
+        return [("text", "", text)]
+    out: list[tuple[str, str, str]] = []
+    pos = 0
+    for m in _FENCE_RE.finditer(text):
+        if m.start() > pos:
+            pre = text[pos:m.start()].strip("\r\n")
+            if pre.strip():
+                out.append(("text", "", pre))
+        lang = (m.group(1) or "").strip().lower()
+        body = m.group(2).rstrip("\r\n")
+        out.append(("code", lang, body))
+        pos = m.end()
+    if not out:
+        return [("text", "", text)]
+    if pos < len(text):
+        tail = text[pos:].strip("\r\n")
+        if tail.strip():
+            out.append(("text", "", tail))
+    return out
+
+
+def has_inline_code(text: str) -> bool:
+    return "`" in text and bool(_INLINE_CODE_RE.search(text))
+
+
+def inline_code_html(text: str, on_accent: bool = False) -> str:
+    """把行内 `code` 安全转义为等宽底色标签,其余部分完全 HTML 转义。"""
+    bg = "rgba(255,255,255,0.22)" if on_accent else "rgba(127,135,150,0.20)"
+    parts: list[str] = []
+    pos = 0
+    for m in _INLINE_CODE_RE.finditer(text):
+        if m.start() > pos:
+            parts.append(html.escape(soft_wrap(text[pos:m.start()])))
+        code_txt = html.escape(soft_wrap(m.group(1)))
+        parts.append(
+            f'<span style="font-family:\'Cascadia Mono\',Consolas,monospace; background-color:{bg}; '
+            f'padding:1px 5px; border-radius:4px; font-size:9pt;">{code_txt}</span>'
+        )
+        pos = m.end()
+    if pos < len(text):
+        parts.append(html.escape(soft_wrap(text[pos:])))
+    return "".join(parts).replace("\n", "<br>")
+
+
+def _esc_code(seg: str) -> str:
+    return html.escape(seg).replace("  ", "&nbsp; ").replace("\t", "&nbsp;&nbsp;&nbsp;&nbsp;")
+
+
+def highlight_code_html(code: str, lang: str = "") -> str:
+    """零依赖轻量语法高亮,所有字符严格经过 html.escape。"""
+    code = soft_wrap(code.expandtabs(4))
+    colors = {
+        "comment": "#8B949E",
+        "string": "#A5D6FF",
+        "deco": "#D2A8FF",
+        "kw": "#FF7B72",
+        "lit": "#79C0FF",
+    }
+    out: list[str] = []
+    pos = 0
+    for m in _CODE_TOKEN_RE.finditer(code):
+        if m.start() > pos:
+            out.append(_esc_code(code[pos:m.start()]))
+        kind = m.lastgroup or ""
+        col = colors.get(kind, "#E6EDF3")
+        tok = _esc_code(m.group(0))
+        out.append(f'<span style="color:{col};">{tok}</span>')
+        pos = m.end()
+    if pos < len(code):
+        out.append(_esc_code(code[pos:]))
+    res = "".join(out).replace("\n", "<br>")
+    return re.sub(r"(?:^|(?<=<br>))( +)", lambda m: "&nbsp;" * len(m.group(1)), res)
 
 
 def fmt_eta(secs: float) -> str:

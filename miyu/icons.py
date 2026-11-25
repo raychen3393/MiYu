@@ -529,6 +529,63 @@ def _heart(p, c):
     p.drawPath(path)
 
 
+def _minimize(p, c):
+    _line(p, (5.5, 12), (18.5, 12))
+
+
+def _maximize(p, c):
+    p.drawRoundedRect(QRectF(5.5, 5.5, 13, 13), 2.4, 2.4)
+
+
+def _restore(p, c):
+    p.drawRoundedRect(QRectF(5, 8, 10.5, 10.5), 2.0, 2.0)
+    path = QPainterPath(QPointF(8.5, 8))
+    path.lineTo(8.5, 6.5)
+    path.quadTo(8.5, 5, 10, 5)
+    path.lineTo(17.5, 5)
+    path.quadTo(19, 5, 19, 6.5)
+    path.lineTo(19, 14)
+    path.quadTo(19, 15.5, 17.5, 15.5)
+    path.lineTo(15.5, 15.5)
+    p.drawPath(path)
+
+
+def _sidebar(p, c):
+    p.drawRoundedRect(QRectF(3.5, 4.5, 17, 15), 3.0, 3.0)
+    _line(p, (9.5, 4.5), (9.5, 19.5))
+
+
+def _users(p, c):
+    p.drawEllipse(QPointF(9.5, 8.5), 3.2, 3.2)
+    path = QPainterPath(QPointF(3.8, 19))
+    path.cubicTo(3.8, 15.2, 6.2, 13.5, 9.5, 13.5)
+    path.cubicTo(12.8, 13.5, 15.2, 15.2, 15.2, 19)
+    p.drawPath(path)
+    arc = QPainterPath(QPointF(15, 5.8))
+    arc.cubicTo(17.5, 6.2, 18.2, 9.8, 15.5, 11.2)
+    p.drawPath(arc)
+    sh = QPainterPath(QPointF(16.5, 13.8))
+    sh.cubicTo(19.0, 14.4, 20.4, 16.2, 20.4, 19)
+    p.drawPath(sh)
+
+
+def _terminal(p, c):
+    p.drawRoundedRect(QRectF(3.5, 4.5, 17, 15), 3.0, 3.0)
+    _line(p, (7.2, 9.5), (10.5, 12), (7.2, 14.5))
+    _line(p, (12.2, 15), (16.5, 15))
+
+
+def _code(p, c):
+    _line(p, (8.5, 8), (4.2, 12), (8.5, 16))
+    _line(p, (15.5, 8), (19.8, 12), (15.5, 16))
+    _line(p, (13.6, 6.5), (10.4, 17.5))
+
+
+def _grid(p, c):
+    for x, y in ((4.2, 4.2), (13.3, 4.2), (4.2, 13.3), (13.3, 13.3)):
+        p.drawRoundedRect(QRectF(x, y, 6.5, 6.5), 1.8, 1.8)
+
+
 DRAW = {
     "menu": _menu, "sun": _sun, "moon": _moon, "plus": _plus, "image": _image, "flame": _flame,
     "send": _send, "shield": _shield, "shield_check": _shield_check, "trash": _trash, "lock": _lock,
@@ -537,6 +594,8 @@ DRAW = {
     "chevron_down": _chevron_down, "chevron_up": _chevron_up, "search": _search, "logout": _logout, "star": _star, "bell": _bell, "gomoku": _gomoku, "trophy": _trophy, "duck": _duck, "chat": _chat, "refresh": _refresh, "bell_off": _bell_off, "paperclip": _paperclip,
     "smile": _smile, "reply": _reply, "file": _file, "at": _at, "undo": _undo, "folder": _folder,
     "sunset": _sunset, "pin": _pin, "palette": _palette, "paw": _paw, "more": _more, "heart": _heart,
+    "minimize": _minimize, "maximize": _maximize, "restore": _restore, "sidebar": _sidebar,
+    "users": _users, "terminal": _terminal, "code": _code, "grid": _grid,
 }
 
 

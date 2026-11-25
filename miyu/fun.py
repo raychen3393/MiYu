@@ -15,31 +15,40 @@ import random
 import re
 import time
 
-from PySide6.QtCore import QPointF, QRect, QRectF, Qt, QTimer
+from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, QTimer
 from PySide6.QtGui import (
-    QBrush, QColor, QFont, QFontMetrics, QLinearGradient, QPainter, QPainterPath, QPen, QPolygonF, QRadialGradient,
-    QTextOption,
+    QBrush, QColor, QCursor, QFont, QFontMetrics, QLinearGradient, QPainter, QPainterPath, QPen, QPolygonF,
+    QRadialGradient, QTextOption,
 )
 from PySide6.QtWidgets import QWidget
 
+from .pet3d import (
+    COAT_BY_ID, COATS, EYE_BY_ID, EYE_STYLES, ROOM_BY_ID, ROOMS, Pose3D, clay_brush, contour_pen,
+    paint_3d_ears, paint_3d_eye, paint_3d_head_coat, paint_3d_muzzle, paint_3d_tail, paint_ao_shadow,
+    paint_capy_tangerine, paint_diorama, resolve_colors,
+)
 from .petcare import (
     BORED, EXPR_BY_ID, FEED_XP, FEED_XP_DAILY, FOOD_BY_ID, FOOD_DECAY, FORMS, HUNGRY, JOY_DECAY, PLAY_XP, PLAY_XP_DAILY,
     TOY_BY_ID, clamp, form_of,
 )
-from .theme import T, qcolor
+from .theme import T, is_dark, qcolor
 
 OUTLINE = "#4A3B32"
 SPECIES = {
     "cat": {"label": "小猫", "body": "#FFE2C4", "inner": "#FFB8A8"},
     "bunny": {"label": "小兔", "body": "#FFFFFF", "inner": "#FFC2CF"},
     "bear": {"label": "小熊", "body": "#E2BC94", "inner": "#C99A70"},
+    "capy": {"label": "卡皮巴拉", "body": "#C89568", "inner": "#9C6B43"},
+    "shiba": {"label": "柴犬", "body": "#F2AA5B", "inner": "#FFF4E4"},
+    "fox": {"label": "小狐狸", "body": "#EB6E3E", "inner": "#FFF5EB"},
+    "penguin": {"label": "小企鹅", "body": "#3B4E70", "inner": "#F8FAFC"},
 }
 
 # ---------------------------------------------------------------- 宠物养成
 PET_MAX_LEVEL = 50
 DEFAULT_PET_NAME = "团团"
 XP_PER_KEY = 1
-XP_PER_MESSAGE = 6
+XP_PER_MESSAGE = 12
 # (id, 名字, 解锁等级, 部位) —— 同一个部位一次只能戴一件
 ACCESSORIES = [
     ("bow", "蝴蝶结", 2, "ear"),
@@ -97,6 +106,26 @@ ACCESSORIES = [
     ("jetpack", "喷气背包", 42, "body"),
     ("stardust", "星尘", 46, "fx"),
     ("sparkle", "魔法光点", 48, "fx"),
+    # 3.0 新增潮玩与赛博装扮
+    ("tangerine", "头顶蜜橘", 2, "top"),
+    ("boba", "珍珠奶茶", 8, "hand"),
+    ("vr", "赛博目镜", 22, "face"),
+    ("cyber_halo", "全息光环", 34, "top"),
+    # 3.1 新增低等级友好装扮与通行证限定
+    ("beret", "画家贝雷帽", 1, "head"),
+    ("bandana", "元气发带", 1, "head"),
+    ("star_ear", "星月耳饰", 1, "ear"),
+    ("ribbon_neck", "学院领结", 1, "neck"),
+    ("sweater", "条纹毛衣", 1, "body"),
+    ("round_shades", "糖果墨镜", 2, "face"),
+    ("coffee", "冰美式", 2, "hand"),
+    ("sparkle_fx", "微光粒子", 2, "fx"),
+    ("gamepad", "复古掌机", 3, "hand"),
+    ("overcoat", "卡其风衣", 3, "body"),
+    ("music_fx", "漂浮音符", 4, "fx"),
+    ("guitar", "迷你吉他", 5, "hand"),
+    ("pixel_shades", "像素墨镜", 99, "face"),
+    ("king_robe", "星穹披风", 99, "body"),
 ]
 # 套装:(id, 名字, 部件, 集齐后的光效颜色)。一键穿上,集齐有一圈套装光效
 OUTFITS = [
@@ -106,28 +135,37 @@ OUTFITS = [
     ("pirate", "海盗船长", ("pirate", "eyepatch", "sword", "bowtie"), "#868E96"),
     ("astro", "宇航员", ("astro", "jetpack", "stardust"), "#4DABF7"),
     ("sakura", "樱花和服", ("kanzashi", "kimono", "fan", "petals"), "#F783AC"),
+    ("cyber", "赛博特工", ("headphones", "vr", "jetpack", "cyber_halo"), "#20C997"),
+    ("campus", "元气学院", ("beret", "ribbon_neck", "sweater", "coffee"), "#FF8787"),
+    ("street", "潮酷玩家", ("bandana", "round_shades", "overcoat", "gamepad"), "#339AF0"),
+    ("rockstar", "节奏达人", ("star_ear", "pixel_shades", "guitar", "music_fx"), "#F06595"),
 ]
 OUTFIT_BY_ID = {o[0]: o for o in OUTFITS}
 SLOTS = [("head", "头饰"), ("ear", "耳边"), ("face", "脸上"), ("neck", "脖子"), ("body", "衣服"), ("top", "头顶"),
          ("hand", "手持"), ("fx", "特效")]
 ACC_BY_ID = {a[0]: a for a in ACCESSORIES}
+DYE_PRESETS = [
+    ("", "原色"), ("#FF6B8A", "草莓粉"), ("#FF922B", "活力橘"), ("#FFD43B", "柠檬黄"),
+    ("#51CF66", "薄荷绿"), ("#20C997", "青柠青"), ("#339AF0", "晴空蓝"), ("#7950F2", "星云紫"),
+    ("#F06595", "樱桃红"), ("#2B2D42", "曜石黑"), ("#F8F9FA", "奶霜白"), ("#D4A373", "燕麦棕"),
+]
 
 
 def xp_for_level(level: int) -> int:
-    """升到第 level 级需要的累计经验。Lv2=300,Lv5≈4200,Lv10≈19500。"""
-    return 0 if level <= 1 else int(round(300 * (level - 1) ** 1.9))
+    """升到第 level 级需要的累计经验(3.1 优化曲线:Lv2=300, Lv5≈2240, Lv10≈7250, Lv20≈21400)。"""
+    return 0 if level <= 1 else int(round(300 * (level - 1) ** 1.45))
 
 
 # 每日成就:(id, 名字, 统计项, 目标, 奖励经验)
 DAILY_GOALS = [
-    ("early", "今日打卡", "msgs", 1, 20),
-    ("typist", "打字达人", "taps", 1000, 50),
-    ("keyboard", "键盘侠", "taps", 5000, 150),
-    ("chatty", "话痨", "msgs", 100, 80),
-    ("petter", "撸宠达人", "pats", 20, 30),
+    ("early", "今日打卡", "msgs", 1, 50),
+    ("typist", "打字达人", "taps", 1000, 120),
+    ("keyboard", "键盘侠", "taps", 5000, 300),
+    ("chatty", "话痨", "msgs", 100, 180),
+    ("petter", "撸宠达人", "pats", 20, 80),
 ]
-STREAK_GOALS = [(3, "连续打卡 3 天", 100), (7, "连续打卡一周", 300), (30, "连续打卡一个月", 1000)]
-PAT_XP, PAT_XP_DAILY = 2, 30            # 撸一下 +2 经验,每天最多算 30 下
+STREAK_GOALS = [(3, "连续打卡 3 天", 180), (7, "连续打卡一周", 480), (30, "连续打卡一个月", 1500)]
+PAT_XP, PAT_XP_DAILY = 5, 30            # 撸一下 +5 经验,每天最多算 30 下
 
 
 def _today() -> str:
@@ -142,6 +180,13 @@ TRICKS = [
     (45, "magic", "变魔术", 2.2), (50, "bow", "鞠躬谢幕", 2.0),
 ]
 TRICK_BY_ID = {t[1]: t for t in TRICKS}
+# 3.1 通行证/签到解锁的特殊趣味动作:(id, 名字, 时长)
+SPECIAL_TRICKS = [
+    ("backflip", "后空翻", 1.5),
+    ("moonwalk", "太空步", 2.2),
+    ("rainbow", "吐彩虹", 2.1),
+]
+SPECIAL_TRICK_BY_ID = {t[0]: t for t in SPECIAL_TRICKS}
 HURT_IMPACT = 0.38                      # 被揍:拳头飞过来到砸中用的时间
 HURT_SECS = 5.0                         # 头上的包留多久
 WEAPONS = [("fist", "拳头", "👊"), ("pillow", "枕头", "🛏"), ("hammer", "玩具锤", "🔨"), ("flick", "弹脑门", "👆")]
@@ -177,6 +222,11 @@ GACHA_POOL = [
     ("SR", "acc", "kanzashi", "樱花发簪"), ("SR", "acc", "fan", "小团扇"), ("SSR", "acc", "kimono", "樱花和服"),
     ("SSR", "acc", "petals", "樱花雨"), ("SSR", "acc", "fireflies", "萤火虫"), ("SSR", "acc", "astro", "宇航头盔"),
     ("SSR", "acc", "jetpack", "喷气背包"),
+    ("R", "acc", "tangerine", "头顶小橘子"), ("SR", "acc", "boba", "珍珠奶茶"),
+    ("SR", "acc", "vr", "赛博目镜"), ("SSR", "acc", "cyber_halo", "全息光环"),
+    ("R", "acc", "beret", "画家贝雷帽"), ("R", "acc", "coffee", "冰美式"),
+    ("SR", "acc", "gamepad", "复古掌机"), ("SR", "acc", "guitar", "迷你吉他"),
+    ("SR", "acc", "pixel_shades", "像素墨镜"), ("SSR", "acc", "king_robe", "星穹披风"),
 ]
 GACHA_WEIGHTS = (("N", 55), ("R", 32), ("SR", 11), ("SSR", 2))
 GACHA_DUP_XP = {"R": 60, "SR": 150, "SSR": 500}
@@ -314,6 +364,21 @@ class PetGrowth:
         except (TypeError, ValueError):
             self.food, self.joy, self.care_t = 80.0, 80.0, time.time()
         self.expr = d.get("expr") if d.get("expr") in EXPR_BY_ID else "normal"
+        self.coat = d.get("coat") if d.get("coat") in COAT_BY_ID else "classic"
+        self.eyes = d.get("eyes") if d.get("eyes") in EYE_BY_ID else "obsidian"
+        self.room = d.get("room") if d.get("room") in ROOM_BY_ID else "cushion"
+        raw_dye = d.get("dye") if isinstance(d.get("dye"), dict) else {}
+        slot_ids = {s[0] for s in SLOTS}
+        self.dye: dict[str, str] = {
+            k: v for k, v in raw_dye.items()
+            if k in slot_ids and isinstance(v, str) and re.fullmatch(r"#[0-9A-Fa-f]{6}", v)
+        }
+        self.checkin_days = min(7, _int("checkin_days"))
+        self.checkin_last = str(d.get("checkin_last", ""))[:12]
+        self.pass_pts = _int("pass_pts")
+        self.pass_claimed: set[int] = {x for x in (d.get("pass_claimed") or []) if type(x) is int and 1 <= x <= 30}
+        self.snack_best = _int("snack_best")
+        self.daily.setdefault("snack_xp", _int("snack_xp", daily))
         self.badges = {k: str(v) for k, v in (d.get("badges") or {}).items() if k in BADGE_BY_ID} \
             if isinstance(d.get("badges"), dict) else {}
         self.title = d.get("title") if d.get("title") in self.badges else ""
@@ -454,6 +519,16 @@ class PetGrowth:
         self.check_badges()
         return res
 
+    def draw_many(self, n: int = 10, rng=None) -> list[dict]:
+        """连扭多次(最多消耗当前拥有的抽卡券)。"""
+        out: list[dict] = []
+        for _ in range(max(1, n)):
+            r = self.draw(rng=rng)
+            if r is None:
+                break
+            out.append(r)
+        return out
+
     # ---- 友谊值
     def add_friend(self, pid: str, nick: str, amount: int, pet: dict | None = None) -> tuple[str, str]:
         """加友谊值。返回 (之前的关系, 现在的关系),两者不同就是升级了。"""
@@ -494,6 +569,8 @@ class PetGrowth:
         self.taps += 1
         self.daily["taps"] += 1
         self.xp += XP_PER_KEY
+        if self.taps % 5 == 0:
+            self.pass_pts += 1
         self._check(today)
         return self.level - before
 
@@ -505,6 +582,7 @@ class PetGrowth:
         self.messages += 1
         self.daily["msgs"] += 1
         self.xp += XP_PER_MESSAGE
+        self.pass_pts += 6
         self._check(today)
         return self.level - before
 
@@ -515,6 +593,7 @@ class PetGrowth:
         self.counts["pats"] += 1
         if self.daily["pats"] <= PAT_XP_DAILY:
             self.xp += PAT_XP
+            self.pass_pts += 3
         self._check(today)
         return self.level - before
 
@@ -538,8 +617,13 @@ class PetGrowth:
         return "还不错"
 
     def can_use(self, kind: str, iid: str) -> bool:
-        item = (FOOD_BY_ID if kind == "food" else TOY_BY_ID if kind == "toy" else EXPR_BY_ID).get(iid)
-        return item is not None and self.level >= item[-1]
+        table = {"food": FOOD_BY_ID, "toy": TOY_BY_ID, "expr": EXPR_BY_ID,
+                 "coat": COAT_BY_ID, "eyes": EYE_BY_ID, "room": ROOM_BY_ID}.get(kind, EXPR_BY_ID)
+        item = table.get(iid)
+        if item is None:
+            return False
+        need = item[2] if kind in ("coat", "eyes", "room", "expr") else item[-1]
+        return self.level >= need or f"{kind}:{iid}" in self.owned
 
     def feed(self, fid: str, today: str | None = None, now: float | None = None) -> int:
         """喂一次。返回升了几级;-1 = 还没解锁这种食物。"""
@@ -584,6 +668,64 @@ class PetGrowth:
             return False
         self.expr = eid
         return True
+
+    def set_coat(self, cid: str) -> bool:
+        if not self.can_use("coat", cid):
+            return False
+        self.coat = cid
+        return True
+
+    def set_eyes(self, eid: str) -> bool:
+        if not self.can_use("eyes", eid):
+            return False
+        self.eyes = eid
+        return True
+
+    def set_room(self, rid: str) -> bool:
+        if not self.can_use("room", rid):
+            return False
+        self.room = rid
+        return True
+
+    def set_dye(self, slot: str, color: str) -> bool:
+        if slot not in {s[0] for s in SLOTS}:
+            return False
+        if not color:
+            self.dye.pop(slot, None)
+            return True
+        if re.fullmatch(r"#[0-9A-Fa-f]{6}", color):
+            self.dye[slot] = color.upper()
+            return True
+        return False
+
+    def has_trick(self, tid: str) -> bool:
+        if tid in TRICK_BY_ID:
+            return self.level >= TRICK_BY_ID[tid][0]
+        return tid in SPECIAL_TRICK_BY_ID and f"trick:{tid}" in self.owned
+
+    def all_tricks(self) -> list[tuple]:
+        """所有已学会的动作(等级解锁 + 签到/通行证特殊动作)。"""
+        out = list(self.tricks())
+        for tid, name, dur in SPECIAL_TRICKS:
+            if f"trick:{tid}" in self.owned:
+                out.append((0, tid, name, dur))
+        return out
+
+    def record_snack_score(self, score: int, today: str | None = None) -> tuple[int, int]:
+        """记录「接零食小游戏」分数,返回 (获得经验, 升了几级)。每天最多从该游戏获得 240 经验。"""
+        self._roll_day(today)
+        score = max(0, int(score))
+        if score > self.snack_best:
+            self.snack_best = score
+        used = int(self.daily.get("snack_xp", 0))
+        gain = min(max(0, 240 - used), max(15, score // 2)) if score > 0 else 0
+        self.daily["snack_xp"] = used + gain
+        self.pass_pts += min(25, max(5, score // 8))
+        self.joy = clamp(self.joy + 15)
+        before = self.level
+        self.xp += gain
+        self._check(today)
+        return gain, self.level - before
 
     @property
     def form(self) -> tuple[int, str, str]:
@@ -657,7 +799,11 @@ class PetGrowth:
                 "tickets": self.tickets, "gacha_day": self.gacha_day, "pity": self.pity, "counts": dict(self.counts),
                 "badges": dict(self.badges), "title": self.title, "diary": list(self.diary),
                 "friends": {k: dict(v) for k, v in self.friends.items()},
-                "food": round(self.food, 1), "joy": round(self.joy, 1), "care_t": self.care_t, "expr": self.expr}
+                "food": round(self.food, 1), "joy": round(self.joy, 1), "care_t": self.care_t, "expr": self.expr,
+                "coat": self.coat, "eyes": self.eyes, "room": self.room, "dye": dict(self.dye),
+                "checkin_days": self.checkin_days, "checkin_last": self.checkin_last,
+                "pass_pts": self.pass_pts, "pass_claimed": sorted(self.pass_claimed),
+                "snack_best": self.snack_best}
 
 
 SPARK_COLORS = {
@@ -687,17 +833,20 @@ def _emoji_font(px: int) -> QFont:
 _PET_PM: dict = {}
 
 
-def pet_pixmap(species: str, level: int, wear=(), w: int = 150, h: int = 92):
-    """画一张宠物的小图(群里的升级卡片、宠物排行榜用)。同样的种类 / 等级 / 装扮只画一次。"""
+def pet_pixmap(species: str, level: int, wear=(), w: int = 150, h: int = 92, coat: str = "classic",
+               eyes: str = "obsidian"):
+    """画一张宠物的小图(群里的升级卡片、宠物排行榜、抽卡预览用)。同样的种类 / 等级 / 装扮只画一次。"""
     from PySide6.QtGui import QPixmap
-    key = (species, int(level), tuple(wear), w, h)
+    key = (species, int(level), tuple(wear), w, h, coat, eyes)
     pm = _PET_PM.get(key)
     if pm is not None:
         return pm
     pet = TypingPet(None)
     pet.set_species(species if species in SPECIES else "cat")
-    pet.growth = PetGrowth({"xp": xp_for_level(max(1, min(PET_MAX_LEVEL, int(level))))})
+    pet.growth = PetGrowth({"xp": xp_for_level(max(1, min(PET_MAX_LEVEL, int(level)))), "coat": coat, "eyes": eyes})
     pet.growth.wear = [x for x in wear if x in ACC_BY_ID][:8]
+    pet.pose3d.yaw = -0.18
+    pet.pose3d.pitch = -0.05
     pet.show_combo = False
     pm = QPixmap(w * 2, h * 2)
     pm.setDevicePixelRatio(2)
@@ -850,6 +999,8 @@ class TypingPet(QWidget):
         self.mirror = False                # 镜像布局:宠物在左边,名牌在右边(群宠物趴在输入框左侧)
         self.bare = False                  # 只画宠物本身(桌面陪伴用,不要计数牌)
         self.centered = False              # 宠物画在正中间(衣橱里的预览)
+        self.show_room = False             # 是否渲染 2.5D 景深小窝底座(衣橱预览、桌面陪伴开启)
+        self.pose3d = Pose3D()             # 3.0:2.5D 视线跟随转头 + 二阶弹簧挤压 + 捏脸物理
         self._act: tuple | None = None     # 正在做的动作 (种类, 开始, 结束, 道具表情):eat / play / love
         self._alert_t = -1e9               # 有新消息:头顶冒个"!",举爪招手
         self._cheer_t = -1e9               # 发消息:举起双爪欢呼
@@ -891,11 +1042,35 @@ class TypingPet(QWidget):
         self._paw ^= 1
         self._press_t = now
         self.count += 1
+        self.pose3d.impulse(0.16 if kind in ("space", "enter") else 0.09)
+        if not self.pose3d.pinching:
+            self.pose3d.target_yaw = (-0.18 if self._paw == 0 else 0.18) if kind == "char" else 0.0
+            self.pose3d.target_pitch = 0.08
         self._speed(33)
+        self.update()
+
+    def start_pinch(self) -> None:
+        self._last_key = max(self._last_key, _now() - 2.0)
+        self.pose3d.start_pinch()
+        self._speed(16)
+        self.update()
+
+    def move_pinch(self, dx: float, dy: float) -> None:
+        self.pose3d.move_pinch(dx, dy)
+        self._speed(16)
+        self.update()
+
+    def end_pinch(self) -> None:
+        dist = self.pose3d.end_pinch()
+        if dist >= 10:
+            self._happy_t = _now()
+            self.say(random.choice(("脸要被捏扁啦 >_<", "糯叽叽Q弹吧~", "别扯我脸蛋啦!", "嘿嘿,好玩吗~")), 2.0)
+        self._speed(16)
         self.update()
 
     def celebrate(self) -> None:
         self._happy_t = _now()
+        self.pose3d.impulse(-0.18)
         self._speed(33)
         self.update()
 
@@ -961,6 +1136,7 @@ class TypingPet(QWidget):
         else:
             self._ear_t = now
             self._happy_t = now
+        self.pose3d.impulse(0.14)
         self._speed(33)
         self.update()
         return kind
@@ -990,7 +1166,7 @@ class TypingPet(QWidget):
                 return "dizzy"
             if h[2] in ("dodge", "counter") and t < 1.4:
                 return "focus"
-        if now - self._annoyed_t < 1.4:
+        if now - self._annoyed_t < 1.4 or self.pose3d.pinching:
             return "annoyed"
         kind = self.acting(now)
         if kind in ("eat", "play"):
@@ -1040,16 +1216,32 @@ class TypingPet(QWidget):
                 and now - self._last_key > 8 and self.growth.tricks() and self.mood(now) != "sleep"):
             self._next_trick = now + random.uniform(70, 150)       # 闲着时偶尔自己表演一个学会的动作
             self.trick(random.choice(self.growth.tricks())[1])
-        active = (now - self._last_key < 1.0 or now - self._happy_t < 1.2 or now - self._ear_t < 0.9
+        # 3.0:2.5D 鼠标视线跟随(窗口在前台且没在打字连击时,脑袋和眼神轻轻追随鼠标)
+        sleeping = self.mood(now) == "sleep"
+        if not sleeping and not self.pose3d.pinching and now - self._last_key > 0.65:
+            try:
+                win = self.window()
+                if win is not None and win.isActiveWindow():
+                    gp = QCursor.pos()
+                    lp = self.mapFromGlobal(gp)
+                    self.pose3d.look_at(float(lp.x()) - self._cx(), float(lp.y()) - (self.EDGE - 16))
+                else:
+                    self.pose3d.look_at(math.sin(now * 0.55) * 32.0, 0.0)
+            except Exception:
+                pass
+        moving_3d = self.pose3d.step(now, sleeping=sleeping)
+        active = (moving_3d or now - self._last_key < 1.0 or now - self._happy_t < 1.2 or now - self._ear_t < 0.9
                   or now < self._blink_until + 0.05 or now - self._surprise_t < 0.4 or now - self._levelup_t < 2.2
-                  or "halo" in self.growth.wear or self._hearts or now - self._annoyed_t < 1.5
+                  or "halo" in self.growth.wear or "cyber_halo" in self.growth.wear or self._hearts
+                  or now - self._annoyed_t < 1.5
                   or self.growth.evolved or self._act is not None or now - self._alert_t < 1.8
                   or now - self._cheer_t < 0.8
                   or (self._hurt is not None and now - self._hurt[1] < HURT_SECS)
                   or self._trick is not None
                   or any(ACC_BY_ID.get(w, ("", "", 0, ""))[3] == "fx" for w in self.growth.wear)
-                  or self.growth.full_outfit() is not None)
-        self._speed(33 if active else (240 if self.mood(now) == "sleep" else 90))
+                  or self.growth.full_outfit() is not None
+                  or (self.show_room and self.growth.room != "none"))
+        self._speed(16 if self.pose3d.pinching else (33 if active else (240 if sleeping else 90)))
         self.update()
 
     # ---- 绘制
@@ -1058,6 +1250,8 @@ class TypingPet(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         now = _now()
+        if self.show_room and self.growth.room != "none":
+            paint_diorama(p, self.growth.room, self.width(), self.height(), self.EDGE, now, is_dark())
         mood = self.mood(now)
         if self.bare:
             pass
@@ -1235,10 +1429,12 @@ class TypingPet(QWidget):
 
     def _paint_pet(self, p: QPainter, now: float, mood: str) -> None:
         sp = SPECIES.get(self.species, SPECIES["cat"])
-        body, inner = QColor(sp["body"]), QColor(sp["inner"])
-        out = QPen(QColor(OUTLINE), 1.7)
-        out.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-        out.setCapStyle(Qt.PenCapStyle.RoundCap)
+        coat = getattr(self.growth, "coat", "classic")
+        eye_style = getattr(self.growth, "eyes", "obsidian")
+        body, inner = resolve_colors(sp, coat)
+        out = contour_pen(body, 1.45)
+        yaw, pitch = self.pose3d.yaw, self.pose3d.pitch
+        stx, sty = self.pose3d.stretch_offset()
         jump = 0.0
         if mood == "happy":
             t = (now - self._happy_t) / 0.45
@@ -1253,12 +1449,16 @@ class TypingPet(QWidget):
         jump += self._hurt_jump(now) + tk["dy"]
         cy = self.EDGE - 8 + jump + breath
         scale = self.growth.size()
+
+        # 底部 2.5D 环境光接触阴影(AO)
+        paint_ao_shadow(p, cx + yaw * 2.0, self.EDGE, 35.0 * scale)
+
         p.save()
-        p.translate(cx, self.EDGE)                 # 以趴着的位置为中心缩放:小时候小一点,慢慢长大
+        p.translate(cx, self.EDGE)                 # 以趴着的位置为中心缩放 + 二阶弹簧体积守恒果冻形变
         p.scale(scale, scale)
-        sq = self._hurt_squash(now)
-        if sq:                                     # 挨揍的一瞬间被压扁
-            p.scale(1 + sq * 0.14, 1 - sq * 0.2)
+        sq = self._hurt_squash(now) + self.pose3d.squash
+        if sq:
+            p.scale(max(0.75, 1 + sq * 0.16), max(0.72, 1 - sq * 0.18))
         if tk["sx"] != 1.0 or tk["sy"] != 1.0:
             p.scale(tk["sx"], tk["sy"])
         if tk["rot"]:
@@ -1276,103 +1476,84 @@ class TypingPet(QWidget):
         outfit = self.growth.full_outfit()
         if outfit is not None:                          # 集齐套装:身后一圈套装颜色的光
             self._paint_outfit_glow(p, now, cx, cy, outfit[3])
-        # 耳朵 + 身体:只画输入框边缘以上的部分,看起来像趴在后面
+
+        # 背部与耳朵 + 3D 粘土头部:只画输入框边缘以上的部分
         p.save()
         p.setClipRect(QRectF(0, 0, self.W, self.EDGE + 0.5))
-        if "cape" in wear:                               # 披风在身体后面,两侧露出来
-            self._acc_cape(p, cx, cy, out)
+        back_cx = cx - yaw * 6.5
+        if "cape" in wear:                               # 披风 / 翅膀 / 喷气背包带背部负视差
+            self._acc_cape(p, back_cx, cy, out)
         if "fairy" in wear:
-            self._acc_fairy(p, now, cx, cy)
+            self._acc_fairy(p, now, back_cx, cy)
         if "jetpack" in wear:
-            self._acc_jetpack(p, now, cx, cy)
-        p.setPen(out)
-        for s in (-1, 1):
-            p.save()
-            pivot = QPointF(cx + s * 14, cy - 18)
-            p.translate(pivot)
-            p.rotate(s * wiggle)
-            p.translate(-pivot)
-            if self.species == "cat":
-                ear = QPainterPath(QPointF(cx + s * 12, cy - 22))
-                ear.lineTo(cx + s * 24, cy - 37)
-                ear.lineTo(cx + s * 28, cy - 15)
-                ear.closeSubpath()
-                p.setBrush(body)
-                p.drawPath(ear)
-                ear_in = QPainterPath(QPointF(cx + s * 15.5, cy - 22))
-                ear_in.lineTo(cx + s * 23, cy - 32)
-                ear_in.lineTo(cx + s * 25, cy - 19)
-                ear_in.closeSubpath()
-                p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(inner)
-                p.drawPath(ear_in)
-                p.setPen(out)
-            elif self.species == "bunny":
-                p.translate(cx + s * 12, cy - 24)
-                p.rotate(s * 12)
-                p.setBrush(body)
-                p.drawEllipse(QPointF(0, -14), 7, 17)
-                p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(inner)
-                p.drawEllipse(QPointF(0, -13), 3.5, 12)
-                p.setPen(out)
-            else:
-                p.setBrush(body)
-                p.drawEllipse(QPointF(cx + s * 21, cy - 21), 9, 9)
-                p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(inner)
-                p.drawEllipse(QPointF(cx + s * 21, cy - 21), 4.5, 4.5)
-                p.setPen(out)
-            p.restore()
+            self._acc_jetpack(p, now, back_cx, cy)
+        paint_3d_tail(p, self.species, body, inner, now, cx, cy, yaw)
+        paint_3d_ears(p, self.species, coat, body, inner, cx + stx * 0.35, cy + sty * 0.25, yaw, pitch, wiggle)
         if self.growth.mythic:                          # 神话期:一对会发光的大羽翼
-            self._paint_mythic_wings(p, now, cx, cy, tk)
+            self._paint_mythic_wings(p, now, back_cx, cy, tk)
         elif self.growth.evolved:                       # 进化:背后一对向上扬起的小翅膀
             flap = math.sin((now - self._t0) * 3.0) * 2.0
             p.setPen(QPen(QColor("#8FA4E0"), 1.4))
             for sgn in (-1, 1):
-                wing = QPainterPath(QPointF(cx + sgn * 20, cy))
-                wing.cubicTo(cx + sgn * 30, cy - 22 - flap, cx + sgn * 40, cy - 32 - flap, cx + sgn * 47, cy - 28 - flap)
-                wing.cubicTo(cx + sgn * 46, cy - 16, cx + sgn * 42, cy - 2, cx + sgn * 28, cy + 8)
+                wing = QPainterPath(QPointF(back_cx + sgn * 20, cy))
+                wing.cubicTo(back_cx + sgn * 30, cy - 22 - flap, back_cx + sgn * 40, cy - 32 - flap,
+                             back_cx + sgn * 47, cy - 28 - flap)
+                wing.cubicTo(back_cx + sgn * 46, cy - 16, back_cx + sgn * 42, cy - 2, back_cx + sgn * 28, cy + 8)
                 wing.closeSubpath()
                 p.setBrush(QColor("#E3EAFF"))
                 p.drawPath(wing)
-                p.drawLine(QPointF(cx + sgn * 30, cy - 4), QPointF(cx + sgn * 41, cy - 20 - flap * 0.6))
-                p.drawLine(QPointF(cx + sgn * 32, cy + 1), QPointF(cx + sgn * 42, cy - 10 - flap * 0.3))
+                p.drawLine(QPointF(back_cx + sgn * 30, cy - 4), QPointF(back_cx + sgn * 41, cy - 20 - flap * 0.6))
+                p.drawLine(QPointF(back_cx + sgn * 32, cy + 1), QPointF(back_cx + sgn * 42, cy - 10 - flap * 0.3))
             p.setPen(out)
-        if "hoodie" in wear:                             # 卫衣的帽子:脸周围一圈
-            p.setBrush(QColor("#9AA8F0"))
-            p.drawEllipse(QPointF(cx, cy + 5), 35, 32)
-        p.setBrush(body)
-        p.drawEllipse(QPointF(cx, cy + 6), 31, 28)
+        if "hoodie" in wear:                             # 卫衣的帽子:脸周围一圈立体棉帽
+            p.setPen(contour_pen(QColor("#9AA8F0"), 1.3))
+            p.setBrush(clay_brush(cx + yaw * 2.5, cy + 5, 35, 32, QColor("#9AA8F0"), yaw, pitch))
+            p.drawEllipse(QPointF(cx + yaw * 2.5, cy + 5), 35.5, 32)
+        paint_3d_head_coat(p, self.species, coat, body, inner, cx, cy, yaw, pitch, stx, sty)
+        body_cx = cx + yaw * 4.5 + stx * 0.35
         if "hoodie" in wear:
-            self._acc_hoodie(p, cx, out)
+            self._acc_hoodie(p, body_cx, out)
         if "sailor" in wear:
-            self._acc_sailor(p, cx, out)
+            self._acc_sailor(p, body_cx, out)
         if "raincoat" in wear:
-            self._acc_raincoat(p, cx, out)
+            self._acc_raincoat(p, body_cx, out)
         if "overalls" in wear:
-            self._acc_overalls(p, cx, out)
+            self._acc_overalls(p, body_cx, out)
         if "apron" in wear:
-            self._acc_apron(p, cx, out)
+            self._acc_apron(p, body_cx, out)
         if "kimono" in wear:
-            self._acc_kimono(p, cx, out)
+            self._acc_kimono(p, body_cx, out)
         p.restore()
-        if "scarf" in wear:
-            self._acc_scarf(p, cx, out)
-        if "bell" in wear:
-            self._acc_bell(p, cx, out)
-        if "bowtie" in wear:
-            self._acc_bowtie(p, cx, out)
-        if "tie" in wear:
-            self._acc_tie(p, cx, out)
-        if "pearl" in wear:
-            self._acc_pearl(p, cx)
 
-        # 脸
-        ey = cy - 7
-        p.setPen(out)
-        for s in (-1, 1):
-            x = cx + s * 10
+        neck_cx = cx + yaw * 5.2 + stx * 0.4
+        if "scarf" in wear:
+            self._acc_scarf(p, neck_cx, out)
+        if "bell" in wear:
+            self._acc_bell(p, neck_cx, out)
+        if "bowtie" in wear:
+            self._acc_bowtie(p, neck_cx, out)
+        if "tie" in wear:
+            self._acc_tie(p, neck_cx, out)
+        if "pearl" in wear:
+            self._acc_pearl(p, neck_cx)
+
+        # 卡皮巴拉没戴帽子和头顶饰品时,默认稳稳顶着一颗小蜜橘
+        has_head_or_top = any(ACC_BY_ID.get(w, ("", "", 0, ""))[3] in ("head", "top") for w in wear)
+        if self.species == "capy" and not has_head_or_top:
+            paint_capy_tangerine(p, cx + stx * 0.5, cy - 21 + pitch * 3.5 + sty * 0.4, now, yaw)
+
+        # 3D 面部前平面(随 yaw / pitch 与捏脸偏移产生鲜明立体转头感)
+        fx = cx + yaw * 9.5 + stx * 0.72
+        ey = cy - 7 + pitch * 5.2 + sty * 0.55
+        my = ey + 6.2 + pitch * 0.8
+        paint_3d_muzzle(p, self.species, body, fx, my, yaw, pitch)
+
+        face_pen = QPen(QColor(OUTLINE), 1.55, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+        p.setPen(face_pen)
+        for idx_e, s in ((0, -1), (1, 1)):
+            # 近侧眼睛略微拉宽间距,远侧略微透视收窄
+            persp = 1.0 + s * yaw * 0.14
+            x = fx + s * 10.2 * persp
             if mood == "sleep":
                 path = QPainterPath(QPointF(x - 4, ey))
                 path.quadTo(x, ey + 3.5, x + 4, ey)
@@ -1387,17 +1568,17 @@ class TypingPet(QWidget):
                 p.drawLine(QPointF(x - 3.5 * s, ey - 3), QPointF(x + 2 * s, ey))
                 p.drawLine(QPointF(x + 2 * s, ey), QPointF(x - 3.5 * s, ey + 3))
             elif mood == "blink":
-                p.drawLine(QPointF(x - 3, ey), QPointF(x + 3, ey))
+                p.drawLine(QPointF(x - 3.2, ey), QPointF(x + 3.2, ey))
             elif mood == "dizzy":                         # 被揍晕:眼睛变成 ×
                 p.drawLine(QPointF(x - 3.2, ey - 3.2), QPointF(x + 3.2, ey + 3.2))
                 p.drawLine(QPointF(x - 3.2, ey + 3.2), QPointF(x + 3.2, ey - 3.2))
             elif mood == "surprise":
                 p.setBrush(QColor("#FFFFFF"))
-                p.drawEllipse(QPointF(x, ey), 3.2, 3.6)
+                p.drawEllipse(QPointF(x, ey), 3.4, 3.8)
                 p.setPen(Qt.PenStyle.NoPen)
                 p.setBrush(QColor(OUTLINE))
-                p.drawEllipse(QPointF(x, ey), 1.4, 1.6)
-                p.setPen(out)
+                p.drawEllipse(QPointF(x + yaw * 1.2, ey + pitch), 1.5, 1.7)
+                p.setPen(face_pen)
             elif mood == "love":                          # 爱心眼
                 p.save()
                 p.translate(x, ey - 2.4)
@@ -1406,81 +1587,94 @@ class TypingPet(QWidget):
                 p.drawPath(heart_path(5.4 + 0.6 * math.sin((now - self._t0) * 9)))
                 p.restore()
             elif self.growth.expr != "normal" and mood == "idle":
-                self._paint_expr_eye(p, x, ey, s, out)
+                self._paint_expr_eye(p, x, ey, s, face_pen)
             else:
-                p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(QColor(OUTLINE))
-                p.drawEllipse(QPointF(x, ey), 2.6, 3.0)
-                p.setBrush(QColor("#FFFFFF"))
-                p.drawEllipse(QPointF(x + 0.9, ey - 1.1), 0.9, 0.9)
-                p.setPen(out)
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(255, 140, 150, 120))
+                paint_3d_eye(p, x, ey, idx_e, eye_style, yaw, pitch, capy=(self.species == "capy"))
+                p.setPen(face_pen)
+
+        # 柔粉渐变腮红团
         for s in (-1, 1):
-            p.drawEllipse(QPointF(cx + s * 18, ey + 5), 4.5, 2.6)
-        my = ey + 6
-        mouth = QPen(QColor(OUTLINE), 1.3)
+            bx = fx + s * 18.0 * (1.0 + s * yaw * 0.12)
+            bg = QRadialGradient(QPointF(bx, ey + 5.2), 5.5)
+            bg.setColorAt(0.0, QColor(255, 125, 145, 138))
+            bg.setColorAt(1.0, QColor(255, 125, 145, 0))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(bg))
+            p.drawEllipse(QPointF(bx, ey + 5.2), 5.5, 3.4)
+
+        mouth = QPen(QColor(OUTLINE), 1.35)
         mouth.setCapStyle(Qt.PenCapStyle.RoundCap)
         p.setPen(mouth)
         p.setBrush(Qt.BrushStyle.NoBrush)
+        mx = fx + yaw * 2.4
         chomp = self.acting(now) == "eat" and math.sin((now - self._act[1]) * 16) > 0
         if chomp:                                        # 啃东西:嘴巴一张一合
             p.setBrush(QColor("#E8706F"))
-            p.drawEllipse(QPointF(cx, my + 1.2), 3.0, 2.6)
+            p.drawEllipse(QPointF(mx, my + 1.4), 3.0, 2.6)
+        elif self.species == "penguin" and mood not in ("surprise",):
+            pass                                         # 企鹅已经有立体小金喙
         elif mood in ("happy", "love") or (mood == "idle" and self.growth.expr in ("smile", "star")):
-            path = QPainterPath(QPointF(cx - 3.5, my - 0.5))
-            path.quadTo(cx, my + 5, cx + 3.5, my - 0.5)
+            path = QPainterPath(QPointF(mx - 3.5, my - 0.3))
+            path.quadTo(mx, my + 5.0, mx + 3.5, my - 0.3)
             path.closeSubpath()
             p.setBrush(QColor("#E8706F"))
             p.drawPath(path)
         elif mood == "surprise":
-            p.drawEllipse(QPointF(cx, my + 0.8), 1.8, 2.2)
+            p.drawEllipse(QPointF(mx, my + 0.9), 1.8, 2.2)
+        elif self.species == "capy":
+            p.drawLine(QPointF(mx, my - 1.2), QPointF(mx, my + 1.8))
+            for s in (-1, 1):
+                path = QPainterPath(QPointF(mx + s * 3.8, my + 2.2))
+                path.quadTo(mx + s * 1.8, my + 3.2, mx, my + 1.8)
+                p.drawPath(path)
         else:
             for s in (-1, 1):
-                path = QPainterPath(QPointF(cx + s * 4.4, my - 0.4))
-                path.quadTo(cx + s * 2.2, my + 2.6, cx, my - 0.4)
+                path = QPainterPath(QPointF(mx + s * 4.4, my - 0.2))
+                path.quadTo(mx + s * 2.2, my + 2.8, mx, my - 0.2)
                 p.drawPath(path)
-        if self.species == "bear":
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor(OUTLINE))
-            p.drawEllipse(QPointF(cx, my - 2.6), 2.0, 1.4)
         if mood == "annoyed":                           # 一滴汗
-            drop = QPainterPath(QPointF(cx + 24, ey - 11))
-            drop.quadTo(cx + 28.5, ey - 4, cx + 24, ey - 2.5)
-            drop.quadTo(cx + 19.5, ey - 4, cx + 24, ey - 11)
+            drop = QPainterPath(QPointF(fx + 23, ey - 11))
+            drop.quadTo(fx + 27.5, ey - 4, fx + 23, ey - 2.5)
+            drop.quadTo(fx + 18.5, ey - 4, fx + 23, ey - 11)
             p.setPen(QPen(QColor("#4D8FD6"), 1))
             p.setBrush(QColor("#9CD3FF"))
             p.drawPath(drop)
-        self._paint_wear(p, now, cx, cy, ey, wear, out)
-        self._paint_wear2(p, now, cx, cy, ey, wear, out)
-        self._paint_wear3(p, now, cx, cy, ey, wear, out)
 
-        # 爪子
+        # 头饰 / 面饰跟随 3D 头部锚点偏转
+        wcx = cx + yaw * 6.8 + stx * 0.55
+        wcy = cy + pitch * 3.5 + sty * 0.42
+        self._paint_wear(p, now, wcx, wcy, ey, wear, out)
+        self._paint_wear2(p, now, wcx, wcy, ey, wear, out)
+        self._paint_wear3(p, now, wcx, wcy, ey, wear, out)
+
+        # 3D 粘土小爪子(带粉色小肉垫感)
         pressed = self._paw if now - self._press_t < 0.14 else -1
         both = now - self._both_t < 0.14
         waving = now - self._alert_t < 1.6
         cheering = now - self._cheer_t < 0.6
         eating = self.acting(now) == "eat"
+        paw_col = QColor("#FFB703") if self.species == "penguin" else (QColor("#5C3D2E") if coat == "siamese" else body)
+        paw_pen = contour_pen(paw_col, 1.3)
         for idx, s in ((0, -1), (1, 1)):
-            px, py, ry = cx + s * 16, float(self.EDGE), 5.5
+            px, py, ry = cx + s * 16 + yaw * 2.5, float(self.EDGE), 5.8
             if both or pressed == idx:
-                py, ry = py + 2.5, 4.6
+                py, ry = py + 2.5, 4.7
             elif pressed != -1:
                 py -= 4
             if mood == "happy":
                 py -= 3
             if eating:                                   # 两只爪子捧着食物
-                px, py = cx + s * 8, self.EDGE - 5 + math.sin((now - self._act[1]) * 16) * 0.8
+                px, py = cx + s * 8 + yaw * 4, self.EDGE - 5 + math.sin((now - self._act[1]) * 16) * 0.8
             elif cheering:
                 py -= 12 * math.sin(math.pi * min(1.0, (now - self._cheer_t) / 0.6))
             elif waving and idx == 1:                    # 右爪举起来招手
                 t = now - self._alert_t
                 px += 6 + math.sin(t * 14) * 4
                 py -= 16 * min(1.0, t / 0.2) * (1 - max(0.0, t - 1.3) / 0.3)
-            p.setPen(out)
-            p.setBrush(body)
-            p.drawEllipse(QPointF(px, py), 7.5, ry)
-            p.setPen(QPen(QColor(OUTLINE), 1.0))
+            p.setPen(paw_pen)
+            p.setBrush(clay_brush(px, py - 1, 8.0, ry + 1, paw_col, yaw))
+            p.drawEllipse(QPointF(px, py), 7.8, ry)
+            p.setPen(QPen(QColor(OUTLINE), 0.95))
             for k in (-1, 0, 1):
                 p.drawLine(QPointF(px + k * 2.8, py + ry - 2.8), QPointF(px + k * 2.8, py + ry - 1.2))
             if both or pressed == idx:                 # 拍下去的冲击小线
@@ -1495,10 +1689,10 @@ class TypingPet(QWidget):
                     p.drawLine(QPointF(px + dx, py + 1), QPointF(px + dx * 1.45, py + 3))
                 p.drawLine(QPointF(px, py + ry + 1.5), QPointF(px, py + ry + 4.5))
 
-        self._paint_props(p, now, cx, cy)
-        self._paint_hurt_body(p, now, cx, cy)
+        self._paint_props(p, now, cx + yaw * 4, cy)
+        self._paint_hurt_body(p, now, wcx, wcy)
         if self.growth.mythic:
-            self._paint_crown(p, now, cx, cy)
+            self._paint_crown(p, now, wcx, wcy)
         p.restore()                                    # 结束缩放
         self._paint_hurt_fx(p, now, cx, cy)
         self._paint_trick_fx(p, now, cx, cy)
@@ -1829,10 +2023,120 @@ class TypingPet(QWidget):
                 a = i / 5 * math.tau
                 p.drawEllipse(QPointF(cx + dx + math.cos(a) * 2.4, y + 6 + math.sin(a) * 2.4), 1.5, 1.5)
 
+    def _dye(self, slot: str, default: str) -> QColor:
+        """如果用户给该部位自定义染色了就用染色,否则用默认颜色。"""
+        c = getattr(self.growth, "dye", {}).get(slot, "")
+        return QColor(c) if c else QColor(default)
+
     def _paint_wear3(self, p: QPainter, now: float, cx: float, cy: float, ey: float, wear: set, out: QPen) -> None:
         t = now - self._t0
         top = cy - 22
         thin = QPen(QColor(OUTLINE), 1.3)
+        # 3.1 新增低等级友好装扮与通行证限定
+        if "beret" in wear:                                     # 画家贝雷帽(支持染色)
+            col = self._dye("head", "#E05A7A")
+            p.setPen(thin)
+            p.setBrush(clay_brush(cx - 2, top - 6, 22, 10, col, self.pose3d.yaw))
+            p.drawEllipse(QPointF(cx - 2, top - 6), 21, 9.5)
+            p.setPen(QPen(col.darker(140), 2.2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            p.drawLine(QPointF(cx - 3, top - 15), QPointF(cx + 1, top - 19))
+        if "bandana" in wear:                                   # 元气运动发带(支持染色)
+            col = self._dye("head", "#339AF0")
+            p.setPen(thin)
+            p.setBrush(col)
+            band = QPainterPath(QPointF(cx - 25, top + 5))
+            band.quadTo(cx, top - 2, cx + 25, top + 5)
+            band.lineTo(cx + 24, top + 10)
+            band.quadTo(cx, top + 4, cx - 24, top + 10)
+            band.closeSubpath()
+            p.drawPath(band)
+            p.setPen(QPen(QColor("#FFFFFF"), 1.3))
+            p.drawLine(QPointF(cx - 6, top + 5), QPointF(cx + 6, top + 5))
+        if "star_ear" in wear:                                  # 星月耳饰
+            col = self._dye("ear", "#FFD43B")
+            ex, ey2 = cx - 22, top + 7
+            p.save()
+            p.translate(ex, ey2)
+            p.setPen(QPen(col.darker(135), 1.0))
+            p.setBrush(col)
+            p.drawPath(star_path(4.8, 0.45))
+            p.restore()
+        if "ribbon_neck" in wear:                               # 学院领结丝带(支持染色)
+            col = self._dye("neck", "#FF6B6B")
+            ny = self.EDGE - 9
+            p.setPen(thin)
+            p.setBrush(col)
+            for s in (-1, 1):
+                tail = QPainterPath(QPointF(cx, ny))
+                tail.lineTo(cx + s * 8, ny + 8)
+                tail.lineTo(cx + s * 3, ny + 9)
+                tail.closeSubpath()
+                p.drawPath(tail)
+                wing = QPainterPath(QPointF(cx, ny))
+                wing.lineTo(cx + s * 9, ny - 4)
+                wing.lineTo(cx + s * 8, ny + 3)
+                wing.closeSubpath()
+                p.drawPath(wing)
+            p.drawEllipse(QPointF(cx, ny), 2.8, 2.6)
+        if "sweater" in wear:                                   # 条纹针织毛衣(支持染色)
+            col = self._dye("body", "#FF8787")
+            y = self.EDGE - 10
+            p.setPen(thin)
+            p.setBrush(col)
+            sw = QPainterPath(QPointF(cx - 26, y + 3))
+            sw.quadTo(cx, y - 2, cx + 26, y + 3)
+            sw.lineTo(cx + 29, self.EDGE + 2)
+            sw.lineTo(cx - 29, self.EDGE + 2)
+            sw.closeSubpath()
+            p.drawPath(sw)
+            p.setPen(QPen(QColor(255, 255, 255, 195), 2.0))
+            p.drawLine(QPointF(cx - 23, y + 6), QPointF(cx + 23, y + 6))
+        if "overcoat" in wear:                                  # 卡其/染色风衣
+            col = self._dye("body", "#D4A373")
+            y = self.EDGE - 11
+            p.setPen(thin)
+            p.setBrush(col)
+            oc = QPainterPath(QPointF(cx - 28, y + 4))
+            oc.quadTo(cx, y - 3, cx + 28, y + 4)
+            oc.lineTo(cx + 31, self.EDGE + 2)
+            oc.lineTo(cx - 31, self.EDGE + 2)
+            oc.closeSubpath()
+            p.drawPath(oc)
+            p.setPen(QPen(col.darker(135), 1.4))
+            p.drawLine(QPointF(cx - 8, y + 1), QPointF(cx - 3, self.EDGE + 1))
+            p.drawLine(QPointF(cx + 8, y + 1), QPointF(cx + 3, self.EDGE + 1))
+        if "king_robe" in wear:                                 # 星穹皇家披风(通行证限定,支持染色)
+            col = self._dye("body", "#5F3DC4")
+            y = self.EDGE - 12
+            p.setPen(QPen(QColor("#FFD43B"), 1.6))
+            p.setBrush(col)
+            kr = QPainterPath(QPointF(cx - 32, y + 3))
+            kr.quadTo(cx, y - 4, cx + 32, y + 3)
+            kr.lineTo(cx + 36, self.EDGE + 2)
+            kr.lineTo(cx - 36, self.EDGE + 2)
+            kr.closeSubpath()
+            p.drawPath(kr)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor("#FFF3BF"))
+            for sx in (-16, 0, 16):
+                p.drawEllipse(QPointF(cx + sx, y + 7), 1.7, 1.7)
+        if "round_shades" in wear:                              # 糖果圆墨镜(支持染色)
+            col = self._dye("face", "#FF922B")
+            p.setPen(QPen(QColor("#FFF4E6"), 1.4))
+            p.setBrush(QColor(col.red(), col.green(), col.blue(), 190))
+            for s in (-1, 1):
+                p.drawEllipse(QPointF(cx + s * 10.5, ey), 6.2, 6.2)
+            p.drawLine(QPointF(cx - 4.3, ey), QPointF(cx + 4.3, ey))
+        if "pixel_shades" in wear:                              # 像素酷墨镜(通行证/签到限定)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor("#111318"))
+            p.drawRect(QRectF(cx - 20, ey - 4.5, 40, 3.2))
+            for s in (-1, 1):
+                p.drawRect(QRectF(cx + s * 11 - 7, ey - 2, 14, 6.5))
+                p.setBrush(QColor("#FFFFFF"))
+                p.drawRect(QRectF(cx + s * 11 - 5, ey - 1, 3, 2.5))
+                p.drawRect(QRectF(cx + s * 11 - 1, ey + 1, 3, 2.2))
+                p.setBrush(QColor("#111318"))
         if "eyepatch" in wear:
             p.setPen(QPen(QColor("#212529"), 1.4))
             p.drawLine(QPointF(cx - 22, ey - 9), QPointF(cx + 20, ey - 3))
@@ -1886,6 +2190,31 @@ class TypingPet(QWidget):
             blink = int(t * 2) % 2 == 0
             p.setBrush(QColor("#FA5252" if blink else "#C92A2A"))
             p.drawEllipse(QPointF(cx + 28, cy - 28), 2.4, 2.4)
+        if "tangerine" in wear:
+            paint_capy_tangerine(p, cx, top, now, self.pose3d.yaw * 0.3)
+        if "vr" in wear:                                        # 赛博流光护目镜
+            visor = QRectF(cx - 19, ey - 5.5, 38, 10.5)
+            vg = QLinearGradient(visor.topLeft(), visor.bottomRight())
+            vg.setColorAt(0.0, QColor(32, 201, 151, 215))
+            vg.setColorAt(0.5, QColor(59, 130, 246, 205))
+            vg.setColorAt(1.0, QColor(168, 85, 247, 215))
+            p.setPen(QPen(QColor("#E6FCF5"), 1.3))
+            p.setBrush(QBrush(vg))
+            p.drawRoundedRect(visor, 4.5, 4.5)
+            scan = cx - 14 + ((t * 28) % 28)
+            p.setPen(QPen(QColor(255, 255, 255, 190), 1.5))
+            p.drawLine(QPointF(scan, ey - 4), QPointF(scan + 3, ey + 3.5))
+        if "cyber_halo" in wear:                                # 双环旋转全息光环
+            hy = top - 14 + math.sin(t * 2.8) * 1.8
+            p.save()
+            p.translate(cx, hy)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(QColor(32, 201, 151, 190), 2.0))
+            p.drawEllipse(QPointF(0, 0), 16, 4.2)
+            p.rotate(math.sin(t * 1.8) * 12)
+            p.setPen(QPen(QColor(168, 85, 247, 165), 1.3, Qt.PenStyle.DashLine))
+            p.drawEllipse(QPointF(0, 0), 20, 5.2)
+            p.restore()
         hand = next((w for w in wear if ACC_BY_ID.get(w, ("", "", 0, ""))[3] == "hand"), None)
         if hand:
             self._paint_hand(p, hand, t, cx + 28, self.EDGE - 4)
@@ -1981,6 +2310,57 @@ class TypingPet(QWidget):
             for i in range(5):
                 a = i / 5 * math.tau - math.pi / 2
                 p.drawEllipse(QPointF(math.cos(a) * 3, -24 + math.sin(a) * 3), 2.4, 2.4)
+        elif item == "boba":                                    # 珍珠奶茶杯 + 吸管 + 黑糖珍珠
+            p.setPen(out)
+            p.setBrush(QColor("#F3D5B5"))
+            cup = QPainterPath(QPointF(-6.5, -20))
+            cup.lineTo(6.5, -20)
+            cup.lineTo(5.0, -3)
+            cup.lineTo(-5.0, -3)
+            cup.closeSubpath()
+            p.drawPath(cup)
+            p.setPen(QPen(QColor("#FF8FAB"), 2.2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            p.drawLine(QPointF(1.5, -18), QPointF(3.5, -28))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor("#FFFFFF"))
+            p.drawRoundedRect(QRectF(-7.2, -21.5, 14.4, 2.6), 1.3, 1.3)
+            p.setBrush(QColor("#3D251E"))
+            for bx, by in ((-2.6, -5.5), (0.4, -5.2), (2.8, -6.2), (-1.0, -7.5)):
+                p.drawEllipse(QPointF(bx, by), 1.4, 1.4)
+        elif item == "coffee":                                  # 冰美式咖啡杯
+            p.setPen(out)
+            p.setBrush(QColor("#6F4E37"))
+            cup = QPainterPath(QPointF(-6, -18))
+            cup.lineTo(6, -18)
+            cup.lineTo(4.5, -2)
+            cup.lineTo(-4.5, -2)
+            cup.closeSubpath()
+            p.drawPath(cup)
+            p.setBrush(QColor("#E9D8A6"))
+            p.drawRect(QRectF(-5.5, -13, 11, 5))
+            p.setBrush(QColor("#FFFFFF"))
+            p.drawRoundedRect(QRectF(-6.8, -20.5, 13.6, 3), 1.4, 1.4)
+        elif item == "gamepad":                                 # 复古掌机
+            col = self._dye("hand", "#7950F2")
+            p.setPen(out)
+            p.setBrush(col)
+            p.drawRoundedRect(QRectF(-8.5, -22, 17, 20), 4, 4)
+            p.setBrush(QColor("#D0EBFF"))
+            p.drawRoundedRect(QRectF(-6, -19.5, 12, 8.5), 2, 2)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor("#FF6B6B"))
+            p.drawEllipse(QPointF(4, -6.5), 1.8, 1.8)
+            p.setBrush(QColor("#FFD43B"))
+            p.drawEllipse(QPointF(1.5, -8.5), 1.6, 1.6)
+        elif item == "guitar":                                  # 迷你木吉他
+            col = self._dye("hand", "#F08C00")
+            p.setPen(out)
+            p.setBrush(QColor("#8D6E63"))
+            p.drawRect(QRectF(-2, -31, 4, 16))
+            p.setBrush(col)
+            p.drawEllipse(QPointF(0, -9), 7.5, 8.5)
+            p.setBrush(QColor("#3E2723"))
+            p.drawEllipse(QPointF(0, -10), 2.5, 2.5)
         p.restore()
 
     def _paint_fx_item(self, p: QPainter, fx: str, t: float, cx: float, cy: float) -> None:
@@ -2065,19 +2445,48 @@ class TypingPet(QWidget):
                 p.drawPath(star_path(3.2, 0.35))
                 p.rotate(-t * 120)
                 p.translate(-x, -y)
+            elif fx == "sparkle_fx":                              # 低级也能戴的柔和微光粒子
+                x = cx + seed_x * 0.9
+                y = self.EDGE - 8 - ph * 56
+                p.setOpacity(math.sin(math.pi * ph) * 0.9)
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor(["#FFF3BF", "#A5D8FF", "#FFD8A8"][i % 3]))
+                p.drawEllipse(QPointF(x, y), 2.3, 2.3)
+            elif fx == "music_fx":                                # 漂浮音符
+                x = cx + seed_x * 0.85 + math.sin(t * 2.2 + i) * 5
+                y = self.EDGE - 6 - ph * 64
+                p.setOpacity(math.sin(math.pi * ph))
+                p.setFont(_emoji_font(12))
+                p.setPen(QColor(["#FF8787", "#74C0FC", "#B197FC"][i % 3]))
+                p.drawText(QRectF(x - 8, y - 8, 16, 16), "♪" if i % 2 == 0 else "♫",
+                           QTextOption(Qt.AlignmentFlag.AlignCenter))
         p.restore()
 
-    # ---- 动作(2.5):每 5 级学会一个
+    # ---- 动作(2.5 + 3.1 特殊动作)
     def trick(self, tid: str) -> bool:
-        t = TRICK_BY_ID.get(tid)
-        if t is None or self.growth.level < t[0]:
+        if tid in TRICK_BY_ID:
+            t = TRICK_BY_ID[tid]
+            if self.growth.level < t[0]:
+                return False
+            dur = t[3]
+        elif tid in SPECIAL_TRICK_BY_ID:
+            if not self.growth.has_trick(tid):
+                return False
+            dur = SPECIAL_TRICK_BY_ID[tid][2]
+        else:
             return False
-        self._trick = (tid, _now(), t[3])
+        self._trick = (tid, _now(), dur)
         self._speed(33)
         if tid == "bow":
             self.say("谢谢大家!", 1.8)
         elif tid == "magic":
             self.say("变变变~", 1.4)
+        elif tid == "backflip":
+            self.say("嘿咻!后空翻~", 1.6)
+        elif tid == "moonwalk":
+            self.say("滑起来了~ 🕺", 2.0)
+        elif tid == "rainbow":
+            self.say("彩虹能量发射! 🌈", 2.0)
         self.update()
         return True
 
@@ -2113,6 +2522,16 @@ class TypingPet(QWidget):
         elif tid == "bow":
             m["sy"] = 1 - 0.14 * ease
             m["rot"] = 8 * ease
+        elif tid == "backflip":
+            m["dy"] = -20 * ease
+            m["rot"] = -360.0 * k
+        elif tid == "moonwalk":
+            m["dx"] = math.sin(k * math.tau) * 14
+            m["rot"] = -8 if math.cos(k * math.tau) >= 0 else 8
+            m["dy"] = -abs(math.sin(k * math.pi * 6)) * 2.5
+        elif tid == "rainbow":
+            m["sy"] = 1 + 0.08 * ease
+            m["dy"] = -4 * ease
         elif tid in ("heart", "wave", "magic"):
             m["dy"] = -3 * ease
         return m
@@ -2163,6 +2582,14 @@ class TypingPet(QWidget):
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QColor(sp["inner"]))
             p.drawEllipse(QPointF(0, -12), 3, 3.2)
+        elif tid == "rainbow":                            # 彩虹能量弧光
+            p.setOpacity(min(1.0, k / 0.15, (1 - k) / 0.25))
+            cols = ("#FF6B6B", "#FFA94D", "#FFD43B", "#51CF66", "#339AF0", "#9775FA")
+            for idx, col in enumerate(cols):
+                r = 34 - idx * 3.0
+                p.setPen(QPen(QColor(col), 2.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.drawArc(QRectF(cx - r, top - 16 - idx * 0.5, r * 2, r * 1.4), 15 * 16, 150 * 16)
         elif tid == "dance":                              # 飘出来的音符
             f = QFont(self.font())
             f.setPixelSize(15)

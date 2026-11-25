@@ -68,7 +68,7 @@ def clamp(v: float, lo: float = 0.0, hi: float = 100.0) -> float:
 
 
 # ====================================================================== 群宠物
-GP_SPECIES = ("cat", "bunny", "bear")
+GP_SPECIES = ("cat", "bunny", "bear", "capy", "shiba", "fox", "penguin")
 GP_DAILY_XP = 300                        # 每人每天最多给群宠物攒多少经验(防刷)
 GP_DAILY_FEEDS = 5                       # 每人每天最多喂几次
 GP_MSG_XP, GP_FEED_XP = 4, 20

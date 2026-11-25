@@ -26,7 +26,8 @@ from . import imaging, motion, storage, stream, theme
 from .bubblefx import MODE_IDS as BUBBLE_MODES, BubbleFx
 from .core import Core, MAX_NICK, MAX_TEXT, clean_nick
 from .dialogs import (
-    ImageViewer, JoinRoomDialog, LogoutDialog, SafetyDialog, SendImageDialog, TextDialog, ask, info, prompt,
+    ImageViewer, JoinRoomDialog, LogoutDialog, SafetyDialog, SendImageDialog, TextDialog, ask, compose_collage, info,
+    prompt,
 )
 from .fun import (
     ACC_BY_ID, EVOLVE_LEVEL, EffectLayer, PetGrowth, SPECIES, TypingBubble, TypingPet, detect_effect,
@@ -148,6 +149,10 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         self.sound_enabled = True          # 总开关
         self.sound_when_hidden = False     # 窗口被老板键隐藏时默认不响,以免暴露
         self.follow_system = True          # 外观跟随 Windows 设置
+        self.frameless = sys.platform == "win32"   # Windows 默认无边框通顶窗口
+        self.compact_side = False                  # 左侧会话栏紧凑模式(74px 头像轨)
+        self.members_open = True                   # 右侧成员栏展开状态
+        self._drag_win_pos: QPoint | None = None
         self.reply_to: Msg | None = None   # 正在引用回复的消息
         self.pending_at: dict[str, str] = {}   # 输入框里 @ 过的人:昵称 → id("all" = 所有人)
         self.transfers: dict[str, dict] = {}   # 文件传输状态 fid → {...}
@@ -184,6 +189,7 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
 
         self.setWindowTitle(APP_NAME)
         self.setWindowIcon(app_icon)
+        self._apply_window_frame(initial=True)
         self.resize(1160, 760)
         self.setMinimumSize(860, 560)
         self.setAcceptDrops(True)
@@ -245,13 +251,19 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         side = QFrame()
         side.setObjectName("sidebar")
         side.setFixedWidth(284)
+        self.sidebar_panel = side
         lay = QVBoxLayout(side)
         lay.setContentsMargins(12, 16, 12, 10)
         lay.setSpacing(6)
+        self._side_lay = lay
 
         head = QHBoxLayout()
-        head.setContentsMargins(8, 0, 0, 0)
-        head.addWidget(label(APP_NAME, "largeTitle"))
+        head.setContentsMargins(4, 0, 0, 0)
+        self.rail_btn = tool("sidebar", 32, "round", "收起 / 展开会话侧边栏(紧凑摸鱼模式)")
+        self.rail_btn.clicked.connect(lambda: self.set_compact_side(not self.compact_side))
+        head.addWidget(self.rail_btn)
+        self.side_title = label(APP_NAME, "largeTitle")
+        head.addWidget(self.side_title)
         head.addStretch(1)
         self.gomoku_btn = tool("gomoku", 32, "round", "五子棋:大厅、排行榜、我的战绩")
         self.gomoku_btn.clicked.connect(lambda: self.open_gomoku())
@@ -294,11 +306,12 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         me = ClickFrame()
         me.setObjectName("meCard")
         me.setCursor(Qt.CursorShape.PointingHandCursor)
-        me.setToolTip("查看我的身份与指纹")
-        me.clicked.connect(self.show_identity)
+        me.setToolTip("查看我的身份与指纹(紧凑模式下打开设置)")
+        me.clicked.connect(lambda: self.show_settings() if self.compact_side else self.show_identity())
         ml = QHBoxLayout(me)
         ml.setContentsMargins(8, 8, 4, 8)
         ml.setSpacing(10)
+        self._me_lay = ml
         self.me_avatar = QLabel()
         self.me_avatar.setFixedSize(36, 36)
         ml.addWidget(self.me_avatar)
@@ -314,6 +327,7 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         self.menu_btn.clicked.connect(lambda: self.show_settings())
         ml.addWidget(self.menu_btn)
         lay.addWidget(me)
+        side.installEventFilter(self)
         return side
 
     def _menu_icon(self, action, name: str):
@@ -479,6 +493,29 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         self.clear_btn = tool("trash", 34, "round", "清空本机上的这段记录")
         self.clear_btn.clicked.connect(self.clear_current)
         hl.addWidget(self.clear_btn)
+        self.members_btn = tool("users", 34, "round", "显示 / 隐藏右侧成员栏")
+        self.members_btn.clicked.connect(lambda: self.set_members_open(not self.members_open))
+        hl.addWidget(self.members_btn)
+        self.win_bar = QWidget(header)
+        wl = QHBoxLayout(self.win_bar)
+        wl.setContentsMargins(4, 0, 0, 0)
+        wl.setSpacing(2)
+        self.min_btn = tool("minimize", 30, "winBtn", "最小化")
+        self.min_btn.setStyleSheet("")
+        self.min_btn.clicked.connect(self.showMinimized)
+        self.max_btn = tool("maximize", 30, "winBtn", "最大化 / 还原")
+        self.max_btn.setStyleSheet("")
+        self.max_btn.clicked.connect(self.toggle_maximize)
+        self.close_btn = tool("close", 30, "winClose", "隐藏窗口(Esc) · 右键退出")
+        self.close_btn.setStyleSheet("")
+        self.close_btn.clicked.connect(self.close)
+        for wb in (self.min_btn, self.max_btn, self.close_btn):
+            wb.setIconSize(QSize(15, 15))
+            wl.addWidget(wb)
+        hl.addWidget(self.win_bar)
+        self.win_bar.setVisible(bool(self.frameless and sys.platform == "win32"))
+        header.installEventFilter(self)
+        self._chat_header = header
         panel.header = header
 
         # 会话内搜索条(浮在顶栏下面)
@@ -553,11 +590,10 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         self.burn_btn.setMenu(self.burn_menu)
         self.burn_menu.aboutToShow.connect(self._fill_burn_menu)
         cl.addWidget(self.burn_btn, 0, Qt.AlignmentFlag.AlignBottom)
-        self.tools_btn = tool("plus", 36, "round", "更多:投票、抽签、骰子、小游戏、一起画、匿名纸条、群公告")
-        self.tools_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.tools_btn = tool("grid", 36, "round", "Bento 工具箱:投票、抽签、骰子、派对游戏、画板、匿名纸条、萌宠互动")
         self.tools_menu = make_menu(self)
         self.tools_menu.aboutToShow.connect(self.fill_tools_menu)
-        self.tools_btn.setMenu(self.tools_menu)
+        self.tools_btn.clicked.connect(self.open_tools_drawer)
         cl.addWidget(self.tools_btn, 0, Qt.AlignmentFlag.AlignBottom)
 
         pill = QFrame()
@@ -594,6 +630,7 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         panel = QFrame()
         panel.setObjectName("members")
         panel.setFixedWidth(232)
+        self.members_panel = panel
         lay = QVBoxLayout(panel)
         lay.setContentsMargins(12, 22, 12, 12)
         lay.setSpacing(8)
@@ -612,14 +649,18 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         self.member_hint = label("双击成员发起私聊", "faint", wrap=True)
         self.member_hint.setContentsMargins(8, 0, 0, 0)
         lay.addWidget(self.member_hint)
+        panel.installEventFilter(self)
         return panel
 
     # ------------------------------------------------------------ 主题
     def _refresh_icons(self) -> None:
         ic = T["icon"]
-        for b in (self.add_btn, self.gomoku_btn, self.duck_btn, self.prank_btn, self.menu_btn, self.img_btn, self.clear_btn, self.file_btn, self.emoji_btn,
+        for b in (self.rail_btn, self.add_btn, self.gomoku_btn, self.duck_btn, self.prank_btn, self.menu_btn,
+                  self.img_btn, self.clear_btn, self.members_btn, self.file_btn, self.emoji_btn,
                   self.search_btn, self.tools_btn):
             b.setIcon(icon(b.property("iconName"), ic, 19))
+        for b in (self.min_btn, self.max_btn, self.close_btn):
+            b.setIcon(icon(b.property("iconName"), ic, 15))
         for b in (self.search_up, self.search_down, self.search_close):
             b.setIcon(icon(b.property("iconName"), ic, 15))
         self.search_icon.setPixmap(icon("search", T["sub"], 16).pixmap(16, 16))
@@ -712,6 +753,110 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
     def showEvent(self, e) -> None:
         super().showEvent(e)
         theme.style_titlebar(self)
+        theme.apply_frameless_dwm(self)
+
+    # ------------------------------------------------------------ 无边框与面板收折
+    def _apply_window_frame(self, initial: bool = False) -> None:
+        was_vis = not initial and self.isVisible()
+        geom = self.geometry() if was_vis else None
+        if self.frameless and sys.platform == "win32":
+            flags = Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint
+            for extra in ("WindowMinMaxButtonsHint", "WindowSystemMenuHint"):
+                f = getattr(Qt.WindowType, extra, None)
+                if f is not None:
+                    flags = flags | f
+            self.setWindowFlags(flags)
+            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+            self._glass_capable = True
+        else:
+            self.setWindowFlags(Qt.WindowType.Window)
+            if theme.GLASS_SUPPORTED:
+                self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+                self._glass_capable = True
+        if getattr(self, "win_bar", None) is not None:
+            self.win_bar.setVisible(bool(self.frameless and sys.platform == "win32"))
+        if was_vis:
+            if geom is not None:
+                self.setGeometry(geom)
+            self.show()
+            theme.style_titlebar(self)
+            theme.apply_frameless_dwm(self)
+
+    def set_frameless(self, on: bool) -> None:
+        on = bool(on) and sys.platform == "win32"
+        if on == self.frameless:
+            return
+        self.frameless = on
+        self._apply_window_frame(initial=False)
+
+    def toggle_maximize(self) -> None:
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
+        self._sync_max_icon()
+
+    def _sync_max_icon(self) -> None:
+        if getattr(self, "max_btn", None) is not None:
+            name = "restore" if bool(self.isMaximized()) else "maximize"
+            self.max_btn.setProperty("iconName", name)
+            self.max_btn.setIcon(icon(name, T["icon"], 15))
+
+    def _update_min_width(self) -> None:
+        sw = 76 if self.compact_side else 284
+        mw = 232 if self.members_open else 0
+        self.setMinimumSize(max(440, sw + mw + 344), 520)
+
+    def set_compact_side(self, on: bool) -> None:
+        self.compact_side = bool(on)
+        self.sidebar_panel.setFixedWidth(76 if self.compact_side else 284)
+        self._side_lay.setContentsMargins(6 if self.compact_side else 12, 16, 6 if self.compact_side else 12, 10)
+        self._me_lay.setContentsMargins(10 if self.compact_side else 8, 8, 6 if self.compact_side else 4, 8)
+        for w in (self.side_title, self.gomoku_btn, self.duck_btn, self.theme_btn, self.add_btn,
+                  self.me_name, self.me_sub, self.menu_btn):
+            w.setVisible(not self.compact_side)
+        self._update_min_width()
+        self.conv_list.doItemsLayout()
+        self.conv_list.viewport().update()
+        self._refit_bubbles()
+
+    def set_members_open(self, on: bool) -> None:
+        self.members_open = bool(on)
+        self.members_panel.setVisible(self.members_open)
+        self._update_min_width()
+        self._refit_bubbles()
+
+    def nativeEvent(self, eventType, message):
+        if self.frameless and sys.platform == "win32" and not self.isMaximized():
+            try:
+                if eventType in (b"windows_generic_MSG", "windows_generic_MSG"):
+                    import ctypes.wintypes
+                    msg = ctypes.wintypes.MSG.from_address(int(message))
+                    if msg.message == 0x0084:              # WM_NCHITTEST:边缘 6px 缩放窗口
+                        pt = self.mapFromGlobal(QCursor.pos())
+                        x, y, w, h = pt.x(), pt.y(), self.width(), self.height()
+                        b = 6
+                        left, right = 0 <= x < b, w - b <= x <= w
+                        top, bottom = 0 <= y < b, h - b <= y <= h
+                        if top and left:
+                            return True, 13
+                        if top and right:
+                            return True, 14
+                        if bottom and left:
+                            return True, 16
+                        if bottom and right:
+                            return True, 17
+                        if left:
+                            return True, 10
+                        if right:
+                            return True, 11
+                        if top:
+                            return True, 12
+                        if bottom:
+                            return True, 15
+            except Exception:
+                pass
+        return super().nativeEvent(eventType, message)
 
     # ------------------------------------------------------------ 查询
     def lobby_members(self) -> list[dict]:
@@ -1415,10 +1560,21 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
             info(self, "无法读取图片", "图片格式不支持,或者图片太大。")
             return
         preview = imaging.thumbnail(first, 320, 14)
+        previews = [imaging.preview_image(im) for im in imgs]
+        thumbs = [imaging.thumbnail(im, 108, 10, shadow=False) for im in previews if im is not None]
+        can_collage = (len(encoded) >= 2 and not self.burn_secs
+                       and not any(isinstance(im, imaging.Gif) for im in imgs))
         dlg = SendImageDialog(self, preview, len(encoded), sum(len(e[0]) for e in encoded), self.burn_secs,
-                              self.conv_label(conv), bad + len(imgs) - len(encoded))
+                              self.conv_label(conv), bad + len(imgs) - len(encoded),
+                              thumbs=thumbs, can_collage=can_collage)
         if not dlg.exec():
             return
+        if getattr(dlg, "merge_collage", False):
+            merged = compose_collage([im for im in previews if im is not None])
+            enc_one = imaging.encode_any(merged) if merged is not None else None
+            if enc_one:
+                self.send_image_data(conv, *enc_one)
+                return
         for data, mime, w, h in encoded:
             self.send_image_data(conv, data, mime, w, h)
 
@@ -1449,7 +1605,10 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
             b = self.bubbles.get(m.mid)
             if b:
                 b.update_meta(time.monotonic())
-        v = ImageViewer(self, m)
+        conv = self._conv_of(m)
+        gallery = ([x for x in conv.messages if x.img is not None and not x.burn and not x.gone]
+                   if conv is not None and not m.burn else [m])
+        v = ImageViewer(self, m, gallery=gallery)
         self._viewers.append(v)
         v.finished.connect(lambda _=0, v=v: self._viewers.remove(v) if v in self._viewers else None)
         v.show()
@@ -2251,6 +2410,33 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         if obj is getattr(self, "_pill", None) or obj is getattr(self, "_composer", None):
             if ev.type() in (QEvent.Type.Move, QEvent.Type.Resize, QEvent.Type.Show):
                 self.chat_panel.place_overlays()
+        if self.frameless and obj in (getattr(self, "_chat_header", None), getattr(self, "sidebar_panel", None),
+                                      getattr(self, "members_panel", None)):
+            t = ev.type()
+            if t == QEvent.Type.MouseButtonDblClick and obj is getattr(self, "_chat_header", None):
+                if ev.button() == Qt.MouseButton.LeftButton:
+                    self.toggle_maximize()
+                    return True
+            elif t == QEvent.Type.MouseButtonPress and ev.button() == Qt.MouseButton.LeftButton:
+                pos = ev.position().toPoint() if hasattr(ev, "position") else ev.pos()
+                if obj is not getattr(self, "_chat_header", None) and pos.y() > HEADER_H:
+                    pass
+                else:
+                    child = obj.childAt(pos)
+                    if not isinstance(child, QToolButton):
+                        wh = self.windowHandle()
+                        if wh is not None and hasattr(wh, "startSystemMove"):
+                            wh.startSystemMove()
+                        else:
+                            gpos = ev.globalPosition().toPoint() if hasattr(ev, "globalPosition") else QCursor.pos()
+                            self._drag_win_pos = gpos - self.frameGeometry().topLeft()
+                        return True
+            elif t == QEvent.Type.MouseMove and self._drag_win_pos is not None:
+                gpos = ev.globalPosition().toPoint() if hasattr(ev, "globalPosition") else QCursor.pos()
+                self.move(gpos - self._drag_win_pos)
+                return True
+            elif t == QEvent.Type.MouseButtonRelease:
+                self._drag_win_pos = None
         lists = {getattr(self, "_member_vp", None): "member", getattr(self, "_conv_vp", None): "conv"}
         if obj in lists and obj is not None:
             t = ev.type()
@@ -2345,6 +2531,7 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
     def changeEvent(self, e) -> None:
         super().changeEvent(e)
         if e.type() == QEvent.Type.WindowStateChange and getattr(self, "convs", None):
+            self._sync_max_icon()
             self._hooks("winstate")                  # 最小化 / 还原(桌面陪伴的宠物跟着出现、消失)
         if e.type() == QEvent.Type.ActivationChange and getattr(self, "convs", None):
             if getattr(self, "cover", None) is not None:
@@ -2606,6 +2793,12 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         self.act_receipts.setChecked(self.send_receipts)
         self.send_typing_on = bool(st.get("typing", True))
         self.act_typing.setChecked(self.send_typing_on)
+        if "frameless" in st and sys.platform == "win32":
+            self.set_frameless(bool(st.get("frameless", True)))
+        if "compact_side" in st:
+            self.set_compact_side(bool(st.get("compact_side", False)))
+        if "members_open" in st:
+            self.set_members_open(bool(st.get("members_open", True)))
         fun = st.get("fun") if isinstance(st.get("fun"), dict) else {}
         for k in self.fun:
             if k not in fun:
@@ -2665,6 +2858,7 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
             "rooms": rooms,
             "settings": {
                 "theme": T["name"], "follow_system": self.follow_system, "glass": theme.GLASS,
+                "frameless": self.frameless, "compact_side": self.compact_side, "members_open": self.members_open,
                 "sound": self.sound_enabled, "sound_hidden": self.sound_when_hidden, "flash": self.flash_enabled,
                 "receipts": self.send_receipts, "typing": self.send_typing_on, "fun": dict(self.fun),
                 "recent_emojis": self.recent_emojis[:24], "title": "" if title == APP_NAME else title,

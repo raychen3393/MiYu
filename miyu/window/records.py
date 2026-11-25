@@ -18,6 +18,7 @@ from PySide6.QtWidgets import QPushButton
 
 from .. import storage
 from ..crypto import ContextKey
+from ..fun import PET_MAX_LEVEL
 from ..msgdb import DB_FILE, MsgDB, WrongKey, remove_files
 from ..widgets import Conv, Msg
 
@@ -217,7 +218,7 @@ class RecordsMixin:
         m.time = float(d.get("time") or time.time())
         m.edited = bool(d.get("edited"))
         m.title = str(d.get("title") or "")[:8]
-        m.level = d.get("level") if type(d.get("level")) is int and 0 <= d.get("level") <= 30 else 0
+        m.level = d.get("level") if type(d.get("level")) is int and 0 <= d.get("level") <= PET_MAX_LEVEL else 0
         if isinstance(d.get("reactions"), dict):
             m.reactions = {e: [x for x in w if isinstance(x, str)] for e, w in d["reactions"].items()
                            if isinstance(w, list)}

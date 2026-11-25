@@ -20,8 +20,10 @@ import os
 import json
 import logging
 import random
+import secrets
 import socket
 import struct
+import sys
 import threading
 import time
 import uuid
@@ -30,6 +32,7 @@ from . import compat, errors
 from . import crypto as C
 
 log = logging.getLogger("miyu")
+_SYS_RNG = secrets.SystemRandom()
 
 DEFAULT_UDP_PORT = 47820
 DEFAULT_TCP_PORT = 47821
@@ -144,7 +147,7 @@ CARD_TYPES = {"poll", "draw", "dice", "game", "board"}
 MAX_CARD_JSON = 16 * 1024
 MAX_EVENT_JSON = 512 * 1024
 ANON_FORWARD_P = 0.67          # 匿名纸条:每一跳有 2/3 的概率再随机转给别人(Crowds 协议)
-ANON_MAX_HOPS = 6
+ANON_MAX_HOPS = 8
 ANON_VIDEO_MAX = 20 * 1024 * 1024    # 匿名纸条里的视频最大 20MB(要经过别人转交,内容直接带在纸条里)
 ANON_THUMB_MAX = 96 * 1024
 ANON_VIDEO_EXTS = (".mp4", ".mov", ".m4v")
@@ -240,9 +243,12 @@ def clean_title(v) -> str:
     return " ".join(str(v).split())[:8] if isinstance(v, str) else ""
 
 
+MAX_PET_LEVEL = 50
+
+
 def clean_level(v) -> int:
-    """名字旁边的等级标识:1~30,其它一律不显示。"""
-    return v if type(v) is int and 1 <= v <= 30 else 0
+    """名字旁边的等级标识:1~50,其它一律不显示。"""
+    return v if type(v) is int and 1 <= v <= MAX_PET_LEVEL else 0
 
 
 def clean_skin(v) -> str | None:
@@ -313,6 +319,54 @@ def local_ipv4s() -> list[str]:
         finally:
             s.close()
     return sorted(ip for ip in ips if not ip.startswith("127.") and ip != "0.0.0.0")
+
+
+def _win_subnet_broadcasts() -> dict[str, str]:
+    """Windows 下通过 GetIpAddrTable 读取每块网卡真实的 IPv4 子网掩码,算出准确的定向广播地址(支持 /16、/22 等网段)。"""
+    if sys.platform != "win32":
+        return {}
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class MIB_IPADDRROW(ctypes.Structure):
+            _fields_ = [
+                ("dwAddr", wintypes.DWORD),
+                ("dwIndex", wintypes.DWORD),
+                ("dwMask", wintypes.DWORD),
+                ("dwBCastAddr", wintypes.DWORD),
+                ("dwReasmSize", wintypes.DWORD),
+                ("unused1", wintypes.USHORT),
+                ("wType", wintypes.USHORT),
+            ]
+
+        iphlpapi = ctypes.WinDLL("iphlpapi", use_last_error=True)
+        size = wintypes.ULONG(0)
+        iphlpapi.GetIpAddrTable(None, ctypes.byref(size), False)
+        if not size.value:
+            return {}
+        buf = ctypes.create_string_buffer(size.value)
+        if iphlpapi.GetIpAddrTable(buf, ctypes.byref(size), False) != 0:
+            return {}
+        count = struct.unpack_from("<I", buf.raw, 0)[0]
+        row_size = ctypes.sizeof(MIB_IPADDRROW)
+        out: dict[str, str] = {}
+        for i in range(min(count, 128)):
+            off = 4 + i * row_size
+            if off + row_size > len(buf.raw):
+                break
+            row = MIB_IPADDRROW.from_buffer_copy(buf.raw, off)
+            ip_b = struct.pack("<I", row.dwAddr)
+            mask_b = struct.pack("<I", row.dwMask)
+            ip_int = int.from_bytes(ip_b, "big")
+            mask_int = int.from_bytes(mask_b, "big")
+            if ip_int and 0 < mask_int < 0xFFFFFFFF:
+                bcast_int = (ip_int & mask_int) | (~mask_int & 0xFFFFFFFF)
+                ip_s = socket.inet_ntoa(ip_b)
+                out[ip_s] = socket.inet_ntoa(bcast_int.to_bytes(4, "big"))
+        return out
+    except Exception:
+        return {}
 
 
 # ====================================================================== 数据结构
@@ -862,7 +916,8 @@ class Core:
             return None
         nid = uuid.uuid4().hex
         self._anon_seen[nid] = None
-        d = {"id": nid, "text": text, "hop": 0}
+        # 初始跳数从随机值(1~3)起步,避免第一跳通过 hop==0 识别出原作者
+        d = {"id": nid, "text": text, "hop": _SYS_RNG.randint(1, 3)}
         if fwd is not None:
             d["m"] = fwd
         if self._submit(self._anon_forward(scope, target, d, exclude=None)) is None:
@@ -975,6 +1030,7 @@ class Core:
     # ------------------------------------------------------------ 网卡与发包
     def _refresh_ifaces(self, emit: bool = True) -> None:
         ips = local_ipv4s()
+        self._bcast_map = _win_subnet_broadcasts()
         if ips == self.local_ips and set(ips) == set(self._send_socks):
             return
         for ip in list(self._send_socks):
@@ -1006,8 +1062,12 @@ class Core:
                 self._fallback_sock.sendto(pkt, ("255.255.255.255", port))
             except OSError:
                 pass
+        bcasts = getattr(self, "_bcast_map", None) or {}
         for ip, s in list(self._send_socks.items()):
-            for dst in ("255.255.255.255", ip.rsplit(".", 1)[0] + ".255"):
+            dsts = {"255.255.255.255", ip.rsplit(".", 1)[0] + ".255"}
+            if ip in bcasts:
+                dsts.add(bcasts[ip])
+            for dst in dsts:
                 try:
                     s.sendto(pkt, (dst, port))
                 except OSError:
@@ -1230,7 +1290,7 @@ class Core:
         proofs = [C.presence_proof(r.ctx, self.my_id, p.id) for r in self.rooms.values()]
         while len(proofs) < 4 or len(proofs) % 4:          # 补随机数,隐藏"在几个群"
             proofs.append(C.random_proof())
-        random.shuffle(proofs)
+        _SYS_RNG.shuffle(proofs)
         return {"t": "presence", "nick": self.nick, "lobby": self.lobby_enabled, "rooms": proofs, "cap": MY_CAPS}
 
     async def _send_presence(self, p: Peer) -> None:
@@ -1415,7 +1475,7 @@ class Core:
                 self._anon_show(scope, target if scope == "room" else None, d["id"], d["text"],
                                 clean_anon_media(d.get("m")))
             return
-        nxt = random.choice(choices)
+        nxt = _SYS_RNG.choice(choices)
         await self._deliver(scope, target, {"mid": uuid.uuid4().hex, "kind": "ev", "ev": "anon_fwd", "d": d},
                             only=nxt.id.hex())
 
@@ -1452,7 +1512,7 @@ class Core:
             nd = {"id": nid, "text": text, "hop": hop + 1}
             if media is not None:
                 nd["m"] = media[0]
-            if hop < ANON_MAX_HOPS and random.random() < ANON_FORWARD_P:
+            if hop < ANON_MAX_HOPS and _SYS_RNG.random() < ANON_FORWARD_P:
                 self.loop.create_task(self._anon_forward(scope, target, nd, exclude=p))
             else:                                   # 由我替作者发给群里所有人(包括作者本人)
                 self.loop.create_task(self._anon_deliver(scope, target, nd))

@@ -312,6 +312,9 @@ class SecurityMixin:
             self.store.set_password(None)
             self.lock_on_show = False
         self.save_account(force=True)
+        self.save_favs(force=True)
+        self._save_background()
+        self.gm_save()
         self.save_history_now(force=True)
 
     def lock_now(self) -> None:

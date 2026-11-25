@@ -8,10 +8,11 @@ import re
 import secrets
 import uuid
 
-from PySide6.QtCore import QPointF, QTimer, Qt, Signal
+from PySide6.QtCore import QPoint, QPointF, QTimer, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
-    QFileDialog, QFrame, QHBoxLayout, QLineEdit, QPlainTextEdit, QScrollArea, QVBoxLayout, QWidget,
+    QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLineEdit, QPlainTextEdit, QPushButton, QScrollArea,
+    QVBoxLayout, QWidget,
 )
 
 from ..cards import GOMOKU_N, RPS, gomoku_winner, new_nonce, rps_hash, rps_result
@@ -43,6 +44,45 @@ def clean_stroke(d: dict) -> dict | None:
             return None
         out.append(max(0, min(BOARD_W if i % 2 == 0 else BOARD_H, v)))
     return {"c": c, "w": float(w), "pts": out}
+
+
+class BentoToolsPopup(QFrame):
+    """Bento 磁贴工具抽屉:半透明毛玻璃分类网格,取代传统长菜单。"""
+
+    def __init__(self, parent, sections: list[tuple[str, list[tuple[str, str, str, object]]]]) -> None:
+        super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint
+                         | Qt.WindowType.NoDropShadowWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        self.setFixedWidth(448)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        card = QFrame(self)
+        card.setObjectName("bentoPopup")
+        outer.addWidget(card)
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(14, 12, 14, 14)
+        lay.setSpacing(8)
+        for sec_title, tiles in sections:
+            if not tiles:
+                continue
+            lay.addWidget(label(sec_title, "section"))
+            grid = QGridLayout()
+            grid.setContentsMargins(0, 0, 0, 2)
+            grid.setSpacing(7)
+            for idx, (emoji, title, sub, cb) in enumerate(tiles):
+                btn = QPushButton(f"{emoji}  {title}\n     {sub}", card)
+                btn.setObjectName("bentoTile")
+                btn.setMinimumHeight(48)
+                btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                btn.clicked.connect(lambda _=False, fn=cb: self._pick(fn))
+                grid.addWidget(btn, idx // 2, idx % 2)
+            lay.addLayout(grid)
+
+    def _pick(self, fn) -> None:
+        self.close()
+        if callable(fn):
+            fn()
 
 
 class PollDialog(Dialog):
@@ -477,6 +517,71 @@ class GamesMixin:
             f = self.pet_growth.friends.get(conv.target or "")
             if f and f["v"] >= FRIEND_PHOTO and f.get("pet"):
                 m.addAction("📸  宠物合照", lambda: self.take_photo(conv.target))
+
+    def _bento_sections(self) -> list[tuple[str, list[tuple[str, str, str, object]]]]:
+        """构造 Bento 磁贴抽屉的分类与按钮:(分类标题, [(emoji, 标题, 副标题, 回调), ...])。"""
+        conv = self.current
+        if conv is None or conv.kind == "self":
+            return []
+        group = conv.kind != "dm"
+        fun_tiles: list[tuple[str, str, str, object]] = []
+        if group:
+            fun_tiles.append(("📊", "发起投票", "单选或多选表决", self.start_poll))
+            fun_tiles.append(("🎲", "幸运抽签", "在线成员随机抽人", self.start_lottery))
+        else:
+            fun_tiles.append(("⚫", "五子棋对战", "聊天卡片实时对弈", lambda: self.start_game("gomoku")))
+            fun_tiles.append(("✊", "加密猜拳", "承诺防作弊出拳", lambda: self.start_game("rps")))
+        fun_tiles.append(("🎯", "掷骰子", "1~6 点手气比拼", self.roll_dice))
+        fun_tiles.append(("🎨", "一起画", "多人实时同步白板", self.start_board))
+
+        party_tiles: list[tuple[str, str, str, object]] = [
+            ("🏆", "五子棋大厅", "天梯积分 · 人机练习", lambda: self.open_gomoku()),
+            ("🦆", "谁是坏鸭", "4~10 人跑图推理", lambda: self.open_duck()),
+            ("🕵", "谁是卧底", "一句话描述找卧底", lambda: self.open_spy()),
+        ]
+        if conv.kind in ("lobby", "room"):
+            party_tiles.append(("🐾", "宠物等级榜", "看看谁家萌宠最强", lambda c=conv: self.open_pet_rank(c)))
+        party_tiles.append(("🎮", "接零食大作战", "25秒接零食赢经验", self.show_snack_game))
+        party_tiles.append(("🎁", "签到与通行证", "每日领限定装扮动作", self.show_pet_pass))
+
+        social_tiles: list[tuple[str, str, str, object]] = []
+        if group:
+            social_tiles.append(("📢", "群公告", "置顶通知全员可见", self.edit_notice))
+            social_tiles.append(("📝", "匿名纸条", "多跳混淆隐藏作者", self.send_anon_note))
+            social_tiles.append(("🔥", "本周排行榜", "话痨与活跃之星", self.show_rank))
+            if conv.kind == "room":
+                social_tiles.append(("✏️", "修改群名", "同步更新暗号群名", lambda c=conv: self.rename_room(c)))
+        else:
+            social_tiles.append(("👉", "戳一戳", "轻轻拍拍对方窗口", lambda c=conv: self.poke(c.target, c)))
+            social_tiles.append(("🐾", f"让{self.pet_growth.name}串门", "派萌宠去对方桌边玩",
+                                 lambda c=conv: self.send_pet_visit(c.target)))
+            social_tiles.append(("🎭", "宠物小剧场", "两只萌宠同台飙戏", lambda c=conv: self.start_skit(c.target)))
+            f = self.pet_growth.friends.get(conv.target or "")
+            if f and f["v"] >= FRIEND_PHOTO and f.get("pet"):
+                social_tiles.append(("📸", "宠物合照", "纪念两小只的友谊", lambda c=conv: self.take_photo(c.target)))
+        w = getattr(self, "video_win", None)
+        if w is not None and getattr(w, "passthrough", False):
+            social_tiles.append(("🎬", "恢复视频点击", "关闭画中画鼠标穿透", self.video_passthrough_off))
+        return [("互动小工具", fun_tiles), ("派对游戏厅", party_tiles), ("群组与萌宠" if group else "私聊与萌宠", social_tiles)]
+
+    def open_tools_drawer(self) -> None:
+        """点输入框旁 ＋ 弹出 Bento 磁贴工具箱。"""
+        conv = self.current
+        if conv is None:
+            return
+        if conv.kind == "self":
+            self.fill_tools_menu()
+            pos = self.tools_btn.mapToGlobal(QPoint(0, 0))
+            self.tools_menu.exec(QPoint(pos.x(), pos.y() - 44))
+            return
+        sections = self._bento_sections()
+        pop = BentoToolsPopup(self, sections)
+        pos = self.tools_btn.mapToGlobal(QPoint(0, 0))
+        pop.adjustSize()
+        x = max(8, pos.x() - 16)
+        y = max(8, pos.y() - pop.sizeHint().height() - 10)
+        pop.move(x, y)
+        pop.show()
 
     # ---------------------------------------------------------------- 投票 / 抽签 / 骰子
     def start_poll(self) -> None:

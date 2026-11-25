@@ -125,12 +125,23 @@ class AccountStore:
         return hmac.compare_digest(derive_key(password, self.salt), self.key)
 
     def set_password(self, password: str | None) -> None:
-        """设置 / 修改 / 去掉启动密码。之后要重新保存账户和记录,才会用新密钥写盘。"""
+        """设置 / 修改 / 去掉启动密码,并自动将已有的收藏、背景图、战绩等文件用新密钥重加密落盘。"""
+        existing: list[tuple[str, object]] = []
+        for name in (ACCOUNT_FILE, FAVS_FILE, BG_FILE, GAMES_FILE, HISTORY_FILE):
+            if os.path.exists(self._path(name)):
+                try:
+                    val = self._read(name)
+                except Locked:
+                    val = None
+                if val is not None:
+                    existing.append((name, val))
         if password:
             self.salt = os.urandom(16)
             self.key = derive_key(password, self.salt)
         else:
             self.key = self.salt = None
+        for name, val in existing:
+            self._write(name, val)
 
     # ---- 底层读写
     def _path(self, name: str) -> str:

@@ -229,12 +229,41 @@ BLACK = {
     },
 }
 
+TERMINAL = {
+    "name": "terminal", "label": "极客终端", "dark_ui": True,
+    "bg": "#0D1117",
+    "chat": "rgba(13,17,23,0.42)", "side": "rgba(10,14,20,0.76)", "header": "rgba(13,17,23,0.82)",
+    "ring": "#0D1117",
+    "card": "#161B22", "card_glass": "rgba(22,27,34,0.94)",
+    "pill": "rgba(255,255,255,0.06)",
+    "line": "rgba(48,54,61,0.70)", "line_strong": "rgba(88,166,255,0.28)",
+    "hover": "rgba(177,186,196,0.08)", "select": "rgba(46,160,67,0.18)",
+    "text": "#C9D1D9", "sub": "#8B949E", "faint": "#6E7681",
+    "accent": "#2EA043", "accent_hover": "#3FB950", "on_accent": "#FFFFFF",
+    "mine": "#1F6FEB", "on_mine": "#FFFFFF", "other": "#161B22",
+    "system_bg": "rgba(22,27,34,0.82)",
+    "good": "#3FB950", "warn": "#D29922", "bad": "#F85149",
+    "burn": "#D29922", "burn_line": "rgba(210,153,34,0.72)",
+    "badge": "#2EA043", "online": "#3FB950", "offline": "#484F58",
+    "scroll": "rgba(139,148,158,0.28)",
+    "icon": "#8B949E", "icon_active": "#E6EDF3",
+    "btn2": "rgba(177,186,196,0.08)", "btn2_hover": "rgba(177,186,196,0.14)",
+    "shadow": (0, 0, 0, 155),
+    "wall": {
+        "stops": [(0.0, "#090D12"), (0.55, "#0D1117"), (1.0, "#0B1519")],
+        "blobs": [(0.14, 0.12, 0.70, "#1F6FEB", 0.16), (0.86, 0.90, 0.72, "#238636", 0.16),
+                  (0.50, 0.50, 0.60, "#161B22", 0.30)],
+        "beams": [(-28, 0.52, 0.45, 0.16, "#58A6FF", 0.04)],
+        "vignette": 0.24, "grain": 0.025,
+    },
+}
+
 THEMES = {"light": LIGHT, "sakura": SAKURA, "dusk": DUSK, "violet": VIOLET, "ocean": OCEAN, "dark": DARK,
-          "black": BLACK}
+          "terminal": TERMINAL, "black": BLACK}
 # 主题选择器里的小圆点颜色 和 菜单图标
 THEME_SWATCH = {"light": ("#9DB7FF", "sun"), "sakura": ("#FF8FB5", "sun"), "dusk": ("#E07A5F", "sunset"),
                 "violet": ("#A855F7", "moon"), "ocean": ("#3B82F6", "moon"), "dark": ("#3A3F4B", "moon"),
-                "black": ("#000000", "moon")}
+                "terminal": ("#2EA043", "terminal"), "black": ("#000000", "moon")}
 
 T: dict = dict(LIGHT)
 GLASS = False                # 当前是否启用 Windows 11 亚克力
@@ -525,9 +554,10 @@ def group_qss() -> str:
     return "\n".join(out)
 
 
-# 等级标识:Lv.1~9 萌新 / 10~19 达人 / 20~29 进化 / 30 传说
+# 等级标识:Lv.1~9 萌新 / 10~19 达人 / 20~29 进化 / 30~39 传说 / 40~50 神话
 LEVEL_TIERS = [(1, "萌新", "#8E8E93", "#FFFFFF"), (10, "达人", "#0A84FF", "#FFFFFF"),
-               (20, "进化", "#AF52DE", "#FFFFFF"), (30, "传说", "#F5B301", "#3A2600")]
+               (20, "进化", "#AF52DE", "#FFFFFF"), (30, "传说", "#F5B301", "#3A2600"),
+               (40, "神话", "#FF6B9D", "#FFFFFF")]
 
 
 def level_tier(level: int) -> int:
@@ -544,6 +574,8 @@ def badges_qss() -> str:
         out.append(f'QLabel#lvBadge[tier="{i}"] {{ background: {bg}; color: {fg}; }}')
     out.append('QLabel#lvBadge[tier="3"] { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, '
                'stop:0 #FFE27A, stop:0.5 #F5B301, stop:1 #FF9F43); }')
+    out.append('QLabel#lvBadge[tier="4"] { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, '
+               'stop:0 #FF7EB3, stop:0.5 #9775FA, stop:1 #4DABF7); color: #FFFFFF; }')
     return "\n".join(out)
 
 
@@ -857,11 +889,31 @@ def set_backdrop(widget, on: bool) -> bool:
             _fields_ = [("l", ctypes.c_int), ("r", ctypes.c_int), ("t", ctypes.c_int), ("b", ctypes.c_int)]
 
         hwnd = int(widget.winId())
-        m = MARGINS(-1, -1, -1, -1) if on else MARGINS(0, 0, 0, 0)
+        frameless = bool(getattr(widget, "frameless", False))
+        m = MARGINS(-1, -1, -1, -1) if on else (MARGINS(1, 1, 1, 1) if frameless else MARGINS(0, 0, 0, 0))
         ctypes.windll.dwmapi.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(m))
         return _dwm_set(hwnd, 38, 3 if on else 1)                  # DWMWA_SYSTEMBACKDROP_TYPE
     except Exception:
         return False
+
+
+def apply_frameless_dwm(widget) -> None:
+    """Windows 无边框窗口保留原生圆角与阴影。"""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        class MARGINS(ctypes.Structure):
+            _fields_ = [("l", ctypes.c_int), ("r", ctypes.c_int), ("t", ctypes.c_int), ("b", ctypes.c_int)]
+
+        hwnd = int(widget.winId())
+        _dwm_set(hwnd, 33, 2)                                      # DWMWA_WINDOW_CORNER_PREFERENCE = DWMWCP_ROUND
+        if not GLASS:
+            m = MARGINS(1, 1, 1, 1) if getattr(widget, "frameless", False) else MARGINS(0, 0, 0, 0)
+            ctypes.windll.dwmapi.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(m))
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------- 样式表
@@ -1185,4 +1237,18 @@ QLabel#bad {{ color: {t['bad']}; font-size: 9pt; }}
 QLabel#viewerInfo {{ color: #98989D; font-size: 9pt; }}
 QLabel#viewerBurn {{ color: #FF9F0A; font-size: 9pt; font-weight: 600; }}
 QLabel#viewerText {{ color: #98989D; font-size: 11pt; }}
+QToolButton#winBtn {{ border-radius: 7px; padding: 0; background: transparent; }}
+QToolButton#winBtn:hover {{ background: {t['btn2_hover']}; }}
+QToolButton#winClose {{ border-radius: 7px; padding: 0; background: transparent; }}
+QToolButton#winClose:hover {{ background: #E81123; color: #FFFFFF; }}
+QFrame#bentoPopup {{ background: {card}; border: 1px solid {t['line_strong']}; border-radius: 18px; }}
+QPushButton#bentoTile {{ background: {t['btn2']}; border: 1px solid {t['line']}; border-radius: 13px; text-align: left; padding: 8px 11px; font-weight: 600; }}
+QPushButton#bentoTile:hover {{ background: {t['select']}; border: 1px solid {t['accent']}; }}
+QFrame#codeCard {{ background: {'#0D1117' if is_dark() else '#1E222A'}; border: 1px solid {t['line_strong']}; border-radius: 13px; }}
+QFrame#codeHead {{ background: rgba(255,255,255,0.05); border: none; border-bottom: 1px solid rgba(255,255,255,0.08); border-top-left-radius: 12px; border-top-right-radius: 12px; }}
+QLabel#codeLang {{ color: #9CA3AF; font-family: "Cascadia Mono", Consolas, monospace; font-size: 8pt; font-weight: 700; }}
+QPushButton#codeCopy {{ background: rgba(255,255,255,0.08); color: #E5E7EB; border: none; border-radius: 6px; padding: 2px 9px; font-size: 8pt; min-height: 20px; }}
+QPushButton#codeCopy:hover {{ background: rgba(255,255,255,0.18); }}
+QLabel#codeBody {{ color: #E6EDF3; font-family: "Cascadia Mono", Consolas, "SF Mono", monospace; font-size: 9.2pt; padding: 8px 12px; selection-background-color: rgba(88,166,255,0.35); }}
+QFrame#albumGrid {{ background: transparent; border: none; }}
 """ + gomoku_qss(t, side)

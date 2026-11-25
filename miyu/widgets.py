@@ -26,8 +26,9 @@ from .icons import avatar, file_badge, icon, paint_icon, soft_shadow
 from .theme import T, qcolor
 from .ui import (
     DANGER_EXTS, EMOJI_GROUPS, HEADER_H, HEAT_ALPHA, HEAT_COLORS, VIDEO_EXTS, _text_opt, button, emoji_font,
-    file_ext, file_paths, fmt_eta, fmt_list_time, fmt_secs, fmt_sep, fmt_speed, highlight_html, images_from_mime,
-    label, local_paths, make_menu, peer_avatar, repolish, soft_wrap,
+    file_ext, file_paths, fmt_eta, fmt_list_time, fmt_secs, fmt_sep, fmt_speed, has_inline_code, highlight_code_html,
+    highlight_html, images_from_mime, inline_code_html, label, local_paths, make_menu, parse_markdown_blocks,
+    peer_avatar, repolish, soft_wrap,
 )
 
 
@@ -733,6 +734,60 @@ class VideoCard(FileCard):
             self.action.emit(self._poster_act)
 
 
+class CodeBlockCard(QFrame):
+    """Markdown 代码块卡片:语法着色 + 语言标识 + 一键复制代码。"""
+
+    def __init__(self, code: str, lang: str = "") -> None:
+        super().__init__()
+        self.raw_code = code
+        self.lang = lang or "code"
+        self.setObjectName("codeCard")
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+
+        head = QFrame(self)
+        head.setObjectName("codeHead")
+        hl = QHBoxLayout(head)
+        hl.setContentsMargins(12, 5, 8, 5)
+        hl.setSpacing(8)
+        n_lines = max(1, code.count("\n") + 1)
+        lang_lab = label(f"{self.lang.upper()}  ·  {n_lines} 行", "codeLang")
+        hl.addWidget(lang_lab)
+        hl.addStretch(1)
+        self.copy_btn = QPushButton("复制代码", head)
+        self.copy_btn.setObjectName("codeCopy")
+        self.copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.copy_btn.clicked.connect(self._copy)
+        hl.addWidget(self.copy_btn)
+        lay.addWidget(head)
+
+        self.code_label = QLabel(self)
+        self.code_label.setObjectName("codeBody")
+        self.code_label.setTextFormat(Qt.TextFormat.RichText)
+        self.code_label.setWordWrap(True)
+        self.code_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.code_label.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
+        self.code_label.setText(highlight_code_html(code, lang))
+        lay.addWidget(self.code_label)
+
+        fm = self.code_label.fontMetrics()
+        longest = max((fm.horizontalAdvance(line.expandtabs(4)) for line in code.splitlines()), default=120)
+        self.natural_w = max(240, longest + 34)
+
+    def _copy(self) -> None:
+        from PySide6.QtWidgets import QApplication
+        QApplication.clipboard().setText(self.raw_code)
+        self.copy_btn.setText("✓ 已复制")
+        QTimer.singleShot(1300, lambda: self._restore_btn())
+
+    def _restore_btn(self) -> None:
+        try:
+            self.copy_btn.setText("复制代码")
+        except RuntimeError:
+            pass
+
+
 class Bubble(QWidget):
     open_image = Signal(object)
     menu_requested = Signal(object, object)       # (消息, 全局坐标)
@@ -760,6 +815,8 @@ class Bubble(QWidget):
         self.sel_btn = None
         self.react_row = None
         self.react_chips: list = []
+        self.code_cards: list[CodeBlockCard] = []
+        self._body_plain = msg.text
         if msg.system:
             lay = QVBoxLayout(self)
             lay.setContentsMargins(28, 6, 28, 6)
@@ -849,29 +906,25 @@ class Bubble(QWidget):
         elif msg.img is not None:
             self._build_image(col, align)
         else:
-            self.body = QLabel(soft_wrap(msg.text))
-            if msg.anon:
-                kind = "noteBubble"
-            elif msg.mention and not mine:
-                kind = "bubbleOtherAt"
-            elif msg.skin and not msg.burn and msg.skin in theme.SKIN_BY_ID:
-                kind = "skin_" + msg.skin
-            elif mine:
-                kind = "bubbleMine" + ("Burn" if msg.burn else "")
+            blocks = (parse_markdown_blocks(msg.text)
+                      if (not msg.burn and not msg.anon and "```" in msg.text) else [("text", "", msg.text)])
+            has_fenced = any(k == "code" for k, _, _ in blocks)
+            if has_fenced:
+                for b_kind, b_lang, b_txt in blocks:
+                    if b_kind == "code":
+                        cc = CodeBlockCard(b_txt, b_lang)
+                        self.code_cards.append(cc)
+                        col.addWidget(cc, 0, align)
+                    elif b_txt.strip():
+                        lab = self._make_text_label(msg, b_txt, mine, grp)
+                        if self.body is None:
+                            self.body = lab
+                            self._body_plain = b_txt
+                        col.addWidget(lab, 0, align)
             else:
-                kind = "bubbleOther" + ("Burn" if msg.burn else "")
-            self.body.setObjectName(kind)
-            self.body.setProperty("side", "r" if mine else "l")
-            if grp != "single" and kind != "noteBubble":
-                self.body.setProperty("grp", grp)
-            self.body.setTextFormat(Qt.TextFormat.PlainText)      # 纯文本,杜绝 HTML 注入
-            # 至少两个圆角那么高:Qt 发现同一侧上下两个圆角加起来比气泡还高,会把两个角都画成直角
-            self.body.setMinimumHeight(2 * theme.BUBBLE_R)
-            self.body.setIndent(0)
-            self.body.setWordWrap(True)
-            self.body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            self.body.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
-            col.addWidget(self.body, 0, align)
+                self.body = self._make_text_label(msg, msg.text, mine, grp)
+                self._body_plain = msg.text
+                col.addWidget(self.body, 0, align)
         self.meta = QLabel()
         self.meta.setObjectName("meta")
         self.meta.setContentsMargins(6, 0, 6, 0)
@@ -879,6 +932,38 @@ class Bubble(QWidget):
         self._col, self._align = col, align
         self.update_meta(time.monotonic())
         self.fit(maxw)
+
+    def _make_text_label(self, msg: Msg, text: str, mine: bool, grp: str) -> QLabel:
+        lab = QLabel()
+        if msg.anon:
+            kind = "noteBubble"
+        elif msg.mention and not mine:
+            kind = "bubbleOtherAt"
+        elif msg.skin and not msg.burn and msg.skin in theme.SKIN_BY_ID:
+            kind = "skin_" + msg.skin
+        elif mine:
+            kind = "bubbleMine" + ("Burn" if msg.burn else "")
+        else:
+            kind = "bubbleOther" + ("Burn" if msg.burn else "")
+        lab.setObjectName(kind)
+        lab.setProperty("side", "r" if mine else "l")
+        if grp != "single" and kind != "noteBubble":
+            lab.setProperty("grp", grp)
+        if not msg.burn and not msg.anon and has_inline_code(text):
+            lab.setTextFormat(Qt.TextFormat.RichText)
+            lab.setText(inline_code_html(text, on_accent=mine and not msg.skin))
+            lab._rich_inline = True
+        else:
+            lab.setTextFormat(Qt.TextFormat.PlainText)          # 纯文本,杜绝 HTML 注入
+            lab.setText(soft_wrap(text))
+            lab._rich_inline = False
+        lab._plain_src = text
+        lab.setMinimumHeight(2 * theme.BUBBLE_R)
+        lab.setIndent(0)
+        lab.setWordWrap(True)
+        lab.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        lab.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
+        return lab
 
     @staticmethod
     def top_gap(grp: str, show_head: bool = False) -> int:
@@ -928,8 +1013,8 @@ class Bubble(QWidget):
         self.unhovered.emit(self)
 
     def content_widget(self):
-        """消息主体(文字气泡 / 图片 / 文件卡片 / 卡片),快捷操作条贴着它摆。"""
-        return self.body or self.card or self.card_w or getattr(self, "_img", None)
+        """消息主体(文字气泡 / 代码卡片 / 图片 / 文件卡片 / 卡片),快捷操作条贴着它摆。"""
+        return self.body or (self.code_cards[0] if self.code_cards else None) or self.card or self.card_w or getattr(self, "_img", None)
 
     def set_select(self, mode: bool, checked: bool) -> None:
         if self.sel_btn is not None:
@@ -995,14 +1080,18 @@ class Bubble(QWidget):
         self._flashing = False
         """搜索时:关键词涂上黄色记号;当前这条整行再加一层底色。"""
         if self.body is not None:
-            text = self.msg.text
+            text = getattr(self.body, "_plain_src", self.msg.text)
             if query and query.lower() in text.lower():
                 self.body.setTextFormat(Qt.TextFormat.RichText)
                 self.body.setText(highlight_html(text, query))
                 self._hl = True
             elif getattr(self, "_hl", False):
-                self.body.setTextFormat(Qt.TextFormat.PlainText)
-                self.body.setText(soft_wrap(text))
+                if getattr(self.body, "_rich_inline", False):
+                    self.body.setTextFormat(Qt.TextFormat.RichText)
+                    self.body.setText(inline_code_html(text, on_accent=self.msg.mine and not self.msg.skin))
+                else:
+                    self.body.setTextFormat(Qt.TextFormat.PlainText)
+                    self.body.setText(soft_wrap(text))
                 self._hl = False
         if bool(self.property("searchHit")) != current:
             self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -1053,11 +1142,14 @@ class Bubble(QWidget):
         col.addWidget(lab, 0, align)
 
     def fit(self, maxw: int) -> None:
+        for cc in self.code_cards:
+            cc.setFixedWidth(max(220, min(maxw, cc.natural_w)))
         target = self.body or self.pill
         if target is None:
             return
         fm = target.fontMetrics()
-        lines = target.text().split("\n")
+        plain = getattr(target, "_plain_src", None)
+        lines = soft_wrap(plain).split("\n") if plain is not None else target.text().split("\n")
         # 左右内边距 28,再多留几像素:中文字宽带小数,宽度刚好卡住时 Qt 会把一行算成两行(气泡莫名变高)
         natural = max((fm.horizontalAdvance(line) for line in lines), default=0) + 36
         target.setFixedWidth(max(2 * theme.BUBBLE_R + 8, min(natural, maxw)))
@@ -1503,14 +1595,20 @@ class ConvDelegate(QStyledItemDelegate):
         self._elided: dict[str, bool] = {}          # 哪些会话名字太长被省略了(悬停时显示完整名字)
 
     def sizeHint(self, option, index) -> QSize:
+        if getattr(self.win, "compact_side", False):
+            return QSize(68, 58)
         return QSize(max(option.rect.width(), 200), self.H)
 
     def helpEvent(self, event, view, option, index) -> bool:
-        """名字被省略时,鼠标停上去显示完整名字。"""
+        """名字被省略或侧栏收起时,鼠标停上去显示完整名字和预览。"""
         if event is not None and event.type() == QEvent.Type.ToolTip:
             conv = self.win.convs.get(index.data(Qt.ItemDataRole.UserRole))
             if conv is not None:
-                tip = conv.title if self._elided.get(conv.key) else ""
+                compact = getattr(self.win, "compact_side", False)
+                tip = conv.title if (compact or self._elided.get(conv.key)) else ""
+                if compact and (conv.preview or conv.unread):
+                    sub = f"({conv.unread} 条未读) " if conv.unread else ""
+                    tip = f"{conv.title}\n{sub}{conv.preview or self.win.default_preview(conv)}"
                 if conv.pinned:
                     tip = (tip + "\n" if tip else "") + "已置顶"
                 if conv.muted:
@@ -1530,7 +1628,8 @@ class ConvDelegate(QStyledItemDelegate):
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
-        r = QRectF(option.rect).adjusted(6, 3, -6, -3)
+        compact = getattr(self.win, "compact_side", False)
+        r = QRectF(option.rect).adjusted(5 if compact else 6, 3, -5 if compact else -6, -3)
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
         hover = bool(option.state & QStyle.StateFlag.State_MouseOver)
         if selected and not theme.is_dark():          # 浅色:选中项是一张带柔和阴影的白色卡片
@@ -1546,6 +1645,33 @@ class ConvDelegate(QStyledItemDelegate):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(qcolor(T["btn2"]))
             painter.drawRoundedRect(r, 11, 11)
+
+        if compact:
+            av = 40
+            ax, ay = int(r.center().x() - av / 2), int(r.center().y() - av / 2)
+            painter.drawPixmap(ax, ay, self.win.conv_avatar(conv, av))
+            if conv.kind == "dm":
+                online = bool(self.win.peers.get(conv.target or "", {}).get("online"))
+                motion.paint_status_dot(painter, QPointF(ax + av - 5, ay + av - 5), 4.5, online, conv.target or "",
+                                        QColor(T["ring"]))
+            if conv.unread:
+                bf = QFont(option.font)
+                bf.setPointSizeF(7.0)
+                bf.setWeight(QFont.Weight.Bold)
+                txt = "•" if (conv.muted and not conv.at_me) else (str(conv.unread) if conv.unread < 100 else "99+")
+                bw = 10 if txt == "•" else max(16, QFontMetrics(bf).horizontalAdvance(txt) + 8)
+                bh = 10 if txt == "•" else 16
+                br = QRectF(ax + av - bw + 4, ay - 2, bw, bh)
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(T["faint"] if (conv.muted and not conv.at_me) else T["badge"]))
+                painter.drawRoundedRect(br, bh / 2, bh / 2)
+                if txt != "•":
+                    painter.setFont(bf)
+                    painter.setPen(QColor("#FFFFFF"))
+                    painter.drawText(br, txt, _text_opt(Qt.AlignmentFlag.AlignCenter))
+            self._elided[conv.key] = True
+            painter.restore()
+            return
 
         av = 42
         ax, ay = int(r.left() + 10), int(r.center().y() - av / 2)

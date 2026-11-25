@@ -127,12 +127,13 @@ class Notifier:
 
     def play(self, force: bool = False) -> bool:
         now = time.monotonic()
-        if self._busy or (not force and now - self._last < self.MIN_GAP):
+        if not force and ((self.MIN_GAP > 0 and self._busy) or now - self._last < self.MIN_GAP):
             return False
         self._last = now
         self.played += 1
         if sys.platform == "win32":
-            threading.Thread(target=self._play_win, name="miyu-sound", daemon=True).start()
+            if not self._busy:
+                threading.Thread(target=self._play_win, name="miyu-sound", daemon=True).start()
         else:
             try:
                 from PySide6.QtWidgets import QApplication
