@@ -20,7 +20,7 @@ from miyu.window import pet as win_pet, records as win_records  # noqa: E402
 
 class V30BugfixAndSecurityTests(unittest.TestCase):
     def test_version_and_changelog_synced(self):
-        self.assertEqual(version.VERSION, "3.1.0")
+        self.assertEqual(version.VERSION, "3.4.0")
         self.assertEqual(changelog.CHANGELOG[0][0], version.VERSION)
 
     def test_password_change_preserves_all_encrypted_blobs(self):
@@ -175,6 +175,63 @@ class V30Pet3DAndUIUpgradeTests(unittest.TestCase):
         restored = fun.PetGrowth(lv1.to_dict())
         self.assertEqual(restored.snack_best, 160)
         self.assertIn(15, restored.pass_claimed)
+
+    def test_v32_lv100_anti_hold_outfits_gacha_and_cloud_game(self):
+        from miyu import petcare
+        # 1. 满级 100 级 + 阶段形态完整
+        self.assertEqual(fun.PET_MAX_LEVEL, 100)
+        self.assertEqual(fun.ANTI_HOLD_LEVEL, 30)
+        self.assertEqual(petcare.form_of(60)[1], "星辰期")
+        self.assertEqual(petcare.form_of(80)[1], "苍穹期")
+        self.assertEqual(petcare.form_of(100)[1], "至臻期")
+        g100 = fun.PetGrowth({"xp": fun.xp_for_level(100)})
+        self.assertEqual(g100.level, 100)
+        self.assertTrue(g100.is_unlocked("eternal_crown"))
+        self.assertTrue(g100.has_trick("coronation"))
+        # 2. 打字防长按分级:30 级以下允许长按,30 级及以上拦截长按连发
+        g29 = fun.PetGrowth({"xp": fun.xp_for_level(29)})
+        g29.tap(is_repeat=True)
+        self.assertEqual(g29.taps, 1)
+        g30 = fun.PetGrowth({"xp": fun.xp_for_level(30)})
+        xp_before_30 = g30.xp
+        g30.tap(is_repeat=True)
+        self.assertEqual(g30.taps, 0)
+        self.assertEqual(g30.xp, xp_before_30)
+        g30.tap(is_repeat=False)
+        self.assertEqual(g30.taps, 1)
+        # 3. 扭蛋限定套装不卡等级(Lv1 抽到即可穿),高阶与扭蛋套装全注册在 OUTFITS
+        self.assertIn("frog", fun.OUTFIT_BY_ID)
+        self.assertIn("eternal", fun.OUTFIT_BY_ID)
+        gacha_ids = {it[2] for it in fun.GACHA_POOL if it[1] == "acc"}
+        self.assertIn("frog_hood", gacha_ids)
+        self.assertIn("honey_jar", gacha_ids)
+        g1 = fun.PetGrowth()
+        self.assertFalse(g1.is_unlocked("frog_hood"))
+        g1.owned.add("acc:frog_hood")
+        self.assertTrue(g1.is_unlocked("frog_hood"))
+        # 4. 云端跳跳乐计分与持久化
+        gain, _ups = g1.record_cloud_score(200, today="2026-11-25")
+        self.assertGreaterEqual(gain, 80)
+        self.assertEqual(g1.cloud_best, 200)
+        self.assertEqual(fun.PetGrowth(g1.to_dict()).cloud_best, 200)
+        # 5. 12 款动态边缘气泡特效 + 签到/扭蛋/升级解锁 + 自定义台词/下班倒计时
+        self.assertEqual(len(fun.BUBBLE_AURAS), 12)
+        self.assertTrue(g100.has_aura("flame"))
+        self.assertTrue(g100.has_aura("eternal"))
+        self.assertFalse(g1.has_aura("neon"))
+        g1.owned.add("aura:neon")
+        self.assertTrue(g1.set_aura("neon"))
+        g1.custom_lines = ["快下班啦!"]
+        g1.off_work = "18:00"
+        restored2 = fun.PetGrowth(g1.to_dict())
+        self.assertEqual(restored2.aura, "neon")
+        self.assertEqual(restored2.custom_lines, ["快下班啦!"])
+        self.assertEqual(restored2.off_work, "18:00")
+        # 6. 宠物排行榜支持接零食与跳跳乐高分榜
+        from miyu import petrank as PR
+        c_card = PR.make_card("a" * 64, "测试", "cat", "团团", 500, "2026-W48", 0, [], snack_best=320, cloud_best=450)
+        self.assertEqual(PR.standings({"a" * 64: c_card}, None, "snack")[0]["sb"], 320)
+        self.assertEqual(PR.standings({"a" * 64: c_card}, None, "cloud")[0]["cb"], 450)
 
 
 if __name__ == "__main__":

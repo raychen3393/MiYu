@@ -466,7 +466,7 @@ def paint_capy_tangerine(p: QPainter, cx: float, top_y: float, now: float, yaw: 
 
 
 def paint_diorama(p: QPainter, room: str, w: float, h: float, edge_y: float, now: float,
-                  dark: bool = False) -> None:
+                  dark: bool = False, ambient: str = "") -> None:
     """在衣橱预览、桌面陪伴或好友合照里绘制 2.5D 微缩宠物小窝景深场景。"""
     if not room or room == "none":
         return
@@ -585,4 +585,40 @@ def paint_diorama(p: QPainter, room: str, w: float, h: float, edge_y: float, now
             p.setBrush(QColor("#FFFFFF"))
             p.drawEllipse(QPointF(mx - 3, edge_y - 11), 1.4, 1.4)
             p.drawEllipse(QPointF(mx + 2.5, edge_y - 9.5), 1.2, 1.2)
+
+    # 3.2 白噪音 × 2.5D 氛围小屋联动(细雨 / 壁炉火星 / 海浪波光 / 微风落叶)
+    if ambient:
+        if "rain" in ambient:
+            p.setPen(QPen(QColor(180, 220, 255, 130), 1.2))
+            for i in range(14):
+                rx = (i * 29 + now * 42) % (w + 24) - 12
+                ry = (i * 19 + now * 165) % (h + 10) - 5
+                p.drawLine(QPointF(rx, ry), QPointF(rx - 3.5, ry + 10.5))
+        elif "fire" in ambient or "hearth" in ambient:
+            glow = QLinearGradient(0, edge_y - 26, 0, h)
+            glow.setColorAt(0, QColor(255, 120, 40, 0))
+            glow.setColorAt(1, QColor(255, 110, 30, 85))
+            p.fillRect(QRectF(0, edge_y - 26, w, h - edge_y + 26), QBrush(glow))
+            p.setPen(Qt.PenStyle.NoPen)
+            for i in range(10):
+                ph = (now * (0.45 + (i % 3) * 0.12) + i * 0.21) % 1.0
+                ex = 20 + (i * 31) % max(40, int(w - 40)) + math.sin(now * 3.5 + i) * 7
+                ey = edge_y + 6 - ph * 58
+                ec = QColor("#FFD43B" if i % 2 == 0 else "#FF6B2B")
+                ec.setAlphaF(max(0.0, math.sin(math.pi * ph) * 0.9))
+                p.setBrush(ec)
+                p.drawEllipse(QPointF(ex, ey), 1.9, 1.9)
+        elif "ocean" in ambient or "sea" in ambient or "wave" in ambient:
+            p.setPen(QPen(QColor(116, 224, 255, 120), 1.4))
+            for i in range(3):
+                wy = edge_y + 2 + i * 4.5
+                p.drawLine(QPointF(16 + math.sin(now * 2 + i) * 8, wy), QPointF(w - 16 + math.sin(now * 2 + i) * 8, wy))
+        else:
+            p.setPen(Qt.PenStyle.NoPen)
+            for i in range(7):
+                ph = (now * 0.25 + i * 0.17) % 1.0
+                lx = (i * 41 + ph * w) % w
+                ly = 12 + (i * 17) % max(20, int(edge_y - 16)) + math.sin(now * 2.5 + i) * 6
+                p.setBrush(QColor(255, 220, 235, 145) if i % 2 else QColor(169, 227, 75, 140))
+                p.drawEllipse(QPointF(lx, ly), 3.0, 1.7)
     p.restore()

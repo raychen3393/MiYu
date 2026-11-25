@@ -15,7 +15,8 @@ from PySide6.QtWidgets import (
 )
 
 from .dialogs import Dialog
-from .fun import ACC_BY_ID, PetGrowth, SPECIAL_TRICK_BY_ID, TypingPet, _today
+from .fun import ACC_BY_ID, AURA_BY_ID, PetGrowth, SPECIAL_TRICK_BY_ID, TypingPet, _today
+from .pet3d import clay_brush, contour_pen
 from .theme import T, is_dark
 from .ui import button, emoji_font, label
 
@@ -23,10 +24,10 @@ from .ui import button, emoji_font, label
 # 7 日循环签到奖励:[(天数, 标题, [(奖励类型, 值, 展示名), ...])]
 CHECKIN_REWARDS: list[tuple[int, str, list[tuple[str, object, str]]]] = [
     (1, "第 1 天", [("xp", 120, "经验 +120"), ("acc", "beret", "装扮·画家贝雷帽")]),
-    (2, "第 2 天", [("ticket", 2, "扭蛋券 ×2"), ("xp", 100, "经验 +100")]),
+    (2, "第 2 天", [("ticket", 2, "扭蛋券 ×2"), ("aura", "sakura", "气泡特效·樱粉流瓣")]),
     (3, "第 3 天", [("trick", "backflip", "特殊动作·后空翻"), ("xp", 150, "经验 +150")]),
     (4, "第 4 天", [("acc", "pixel_shades", "限定·像素墨镜"), ("ticket", 1, "扭蛋券 ×1")]),
-    (5, "第 5 天", [("ticket", 3, "扭蛋券 ×3"), ("xp", 220, "经验 +220")]),
+    (5, "第 5 天", [("ticket", 3, "扭蛋券 ×3"), ("aura", "frost", "气泡特效·霜雪晶芒")]),
     (6, "第 6 天", [("trick", "moonwalk", "特殊动作·太空步"), ("xp", 200, "经验 +200")]),
     (7, "第 7 天", [("acc", "king_robe", "限定·星穹披风"), ("ticket", 5, "扭蛋券 ×5"), ("xp", 350, "经验 +350")]),
 ]
@@ -80,6 +81,16 @@ def _grant_reward(g: PetGrowth, kind: str, val: object) -> tuple[str, int]:
         else:
             g.owned.add(key)
             desc = f"特殊动作「{name}」"
+    elif kind == "aura":
+        aid = str(val)
+        key = f"aura:{aid}"
+        name = AURA_BY_ID[aid][1] if aid in AURA_BY_ID else aid
+        if key in g.owned:
+            g.xp += 120
+            desc = f"气泡特效「{name}」(已拥有→+120经验)"
+        else:
+            g.owned.add(key)
+            desc = f"气泡特效「{name}」"
     elif kind in ("coat", "eyes", "room"):
         key = f"{kind}:{val}"
         if key in g.owned:
@@ -340,14 +351,16 @@ class PassDialog(Dialog):
 
 
 class _SnackStage(QWidget):
-    """「接零食大作战」25 秒轻互动游戏画布。"""
+    """3.2 升级版「2.5D 接零食大作战」:立体球面高光零食 + 磁铁/护盾道具 + Fever 双倍狂热时间。"""
     W, H = 480, 340
     ITEMS = [
-        ("🐟", 10, 125.0, False),
-        ("🍙", 15, 140.0, False),
-        ("🍓", 25, 165.0, False),
-        ("⭐", 40, 195.0, False),
-        ("💣", -15, 175.0, True),
+        ("🐟", 10, 125.0, "snack"),
+        ("🍙", 15, 140.0, "snack"),
+        ("🍓", 25, 165.0, "snack"),
+        ("⭐", 40, 195.0, "star"),
+        ("💣", -15, 175.0, "bomb"),
+        ("🧲", 0, 145.0, "magnet"),
+        ("🛡️", 0, 145.0, "shield"),
     ]
 
     def __init__(self, parent, growth: PetGrowth, species: str, on_finish) -> None:
@@ -373,6 +386,9 @@ class _SnackStage(QWidget):
         self.score = 0
         self.combo = 0
         self.left_s = 25.0
+        self.magnet_s = 0.0
+        self.fever_s = 0.0
+        self.shield = False
         self.drops: list[dict] = []
         self.pops: list[dict] = []
         self._spawn_cd = 0.0
@@ -385,6 +401,9 @@ class _SnackStage(QWidget):
         self.score = 0
         self.combo = 0
         self.left_s = 25.0
+        self.magnet_s = 0.0
+        self.fever_s = 0.0
+        self.shield = False
         self.drops.clear()
         self.pops.clear()
         self.px = self.target_x = self.W / 2.0
@@ -411,6 +430,8 @@ class _SnackStage(QWidget):
         if not self.running:
             return
         self.left_s -= dt
+        self.magnet_s = max(0.0, self.magnet_s - dt)
+        self.fever_s = max(0.0, self.fever_s - dt)
         if self.left_s <= 0:
             self.left_s = 0.0
             self.running = False
@@ -430,27 +451,56 @@ class _SnackStage(QWidget):
 
         self._spawn_cd -= dt
         if self._spawn_cd <= 0:
-            self._spawn_cd = random.uniform(0.32, 0.58)
-            emo, pts, spd, bomb = random.choices(self.ITEMS, weights=(36, 26, 18, 8, 12))[0]
+            self._spawn_cd = random.uniform(0.24, 0.44) if self.fever_s > 0 else random.uniform(0.32, 0.56)
+            emo, pts, spd, kind = random.choices(self.ITEMS, weights=(32, 24, 16, 8, 12, 4, 4))[0]
             self.drops.append({"e": emo, "pts": pts, "v": spd * random.uniform(0.9, 1.15),
-                               "bomb": bomb, "x": random.uniform(32, self.W - 32), "y": -16.0})
+                               "kind": kind, "bomb": kind == "bomb",
+                               "x": random.uniform(32, self.W - 32), "y": -16.0})
 
         kept = []
         catch_y = self.H - 54
         for it in self.drops:
             it["y"] += it["v"] * dt
-            if abs(it["x"] - self.px) < 36 and catch_y - 24 <= it["y"] <= catch_y + 22:
-                if it["bomb"]:
-                    self.score = max(0, self.score + it["pts"])
-                    self.combo = 0
-                    self.pops.append({"t": "💥 -15", "x": it["x"], "y": it["y"], "life": 0.9, "col": "#FF6B6B"})
-                    self.pet.pose3d.impulse(-0.22)
+            # 磁铁自动吸附周围非炸弹零食
+            if self.magnet_s > 0 and not it["bomb"] and it["y"] > 40:
+                mx = self.px - it["x"]
+                my = catch_y - it["y"]
+                dist = math.hypot(mx, my)
+                if 1.0 < dist < 175.0:
+                    it["x"] += (mx / dist) * 260 * dt
+                    it["y"] += (my / dist) * 140 * dt
+            if abs(it["x"] - self.px) < 38 and catch_y - 24 <= it["y"] <= catch_y + 22:
+                kind = it["kind"]
+                if kind == "bomb":
+                    if self.shield:
+                        self.shield = False
+                        self.pops.append({"t": "🛡️ 格挡!", "x": it["x"], "y": it["y"], "life": 1.0, "col": "#339AF0"})
+                        self.pet.pose3d.impulse(0.18)
+                    else:
+                        self.score = max(0, self.score + it["pts"])
+                        self.combo = 0
+                        self.fever_s = 0.0
+                        self.pops.append({"t": "💥 -15", "x": it["x"], "y": it["y"], "life": 0.9, "col": "#FF6B6B"})
+                        self.pet.pose3d.impulse(-0.22)
+                elif kind == "magnet":
+                    self.magnet_s = 5.5
+                    self.pops.append({"t": "🧲 磁铁吸附!", "x": it["x"], "y": it["y"], "life": 1.1, "col": "#FF6B8A"})
+                    self.pet.pose3d.impulse(0.24)
+                elif kind == "shield":
+                    self.shield = True
+                    self.pops.append({"t": "🛡️ 护盾!", "x": it["x"], "y": it["y"], "life": 1.1, "col": "#339AF0"})
+                    self.pet.pose3d.impulse(0.24)
                 else:
                     self.combo += 1
-                    bonus = it["pts"] + (5 if self.combo >= 5 else 0)
+                    if kind == "star" or (self.combo > 0 and self.combo % 8 == 0):
+                        self.fever_s = max(self.fever_s, 5.0)
+                    mult = 2 if self.fever_s > 0 else 1
+                    bonus = (it["pts"] + (5 if self.combo >= 5 else 0)) * mult
                     self.score += bonus
-                    self.pops.append({"t": f"+{bonus}", "x": it["x"], "y": it["y"], "life": 0.85, "col": "#FFD43B"})
-                    self.pet.pose3d.impulse(0.20)
+                    col = "#FF922B" if mult > 1 else "#FFD43B"
+                    self.pops.append({"t": f"+{bonus}" + (" 🔥" if mult > 1 else ""), "x": it["x"], "y": it["y"],
+                                      "life": 0.9, "col": col})
+                    self.pet.pose3d.impulse(0.22)
                 continue
             if it["y"] < self.H + 20:
                 kept.append(it)
@@ -462,56 +512,71 @@ class _SnackStage(QWidget):
         self.update()
 
     def _paint_drop(self, p: QPainter, it: dict) -> None:
-        """手绘 2.5D 风格零食与炸弹(不依赖系统 Emoji 字体,浅色/深色主题都清晰可爱)。"""
+        """2.5D 黏土球面高光零食、炸弹与磁铁/护盾道具。"""
         x, y, emo = it["x"], it["y"], it["e"]
         p.save()
         p.translate(x, y)
-        # 柔和底晕
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(255, 107, 107, 70) if it["bomb"] else QColor(255, 224, 102, 75))
-        p.drawEllipse(QPointF(0, 0), 17, 17)
+        glow_col = (QColor(255, 107, 107, 80) if it["bomb"] else
+                    QColor(51, 154, 240, 85) if it["kind"] == "shield" else
+                    QColor(240, 101, 149, 85) if it["kind"] == "magnet" else
+                    QColor(255, 224, 102, 85))
+        p.setBrush(glow_col)
+        p.drawEllipse(QPointF(0, 0), 18, 18)
         out = QPen(QColor("#4A3B32"), 1.5)
         p.setPen(out)
-        if emo == "🐟":                                        # 蓝银色小鱼干
-            p.setBrush(QColor("#74C0FC"))
-            p.drawEllipse(QPointF(-2, 0), 10, 6)
-            tail = [QPointF(6, 0), QPointF(13, -5.5), QPointF(13, 5.5)]
-            p.drawPolygon(tail)
+        if emo == "🐟":
+            p.setBrush(clay_brush(-2, 0, 12, 8, QColor("#74C0FC")))
+            p.drawEllipse(QPointF(-2, 0), 10.5, 6.2)
+            p.drawPolygon([QPointF(6, 0), QPointF(13.5, -5.8), QPointF(13.5, 5.8)])
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QColor("#1D1D1F"))
             p.drawEllipse(QPointF(-6, -1.5), 1.4, 1.4)
-        elif emo == "🍙":                                      # 海苔饭团
-            p.setBrush(QColor("#FFFFFF"))
+        elif emo == "🍙":
+            p.setBrush(clay_brush(0, 0, 11, 10, QColor("#FFFFFF")))
             p.drawRoundedRect(QRectF(-10, -9, 20, 18), 8, 8)
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QColor("#2B2D42"))
             p.drawRoundedRect(QRectF(-6, 1, 12, 8), 2, 2)
-        elif emo == "🍓":                                      # 草莓小蛋糕
-            p.setBrush(QColor("#FFF0F6"))
+        elif emo == "🍓":
+            p.setBrush(clay_brush(0, 3, 11, 7, QColor("#FFF0F6")))
             p.drawRoundedRect(QRectF(-10, -3, 20, 12), 4, 4)
-            p.setBrush(QColor("#FF6B8A"))
-            p.drawEllipse(QPointF(0, -6), 6.5, 6)
+            p.setBrush(clay_brush(0, -6, 7, 6.5, QColor("#FF6B8A")))
+            p.drawEllipse(QPointF(0, -6), 6.8, 6.2)
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QColor("#51CF66"))
-            p.drawEllipse(QPointF(0, -11), 4.5, 2.2)
-        elif emo == "⭐":                                      # 金色星星
-            p.setBrush(QColor("#FFD43B"))
+            p.drawEllipse(QPointF(0, -11.5), 4.5, 2.2)
+        elif emo == "⭐":
+            p.setBrush(clay_brush(0, 0, 12, 12, QColor("#FFD43B")))
             pts = []
             for i in range(10):
                 a = math.radians(-90 + i * 36)
-                r = 12.0 if i % 2 == 0 else 5.4
+                r = 12.5 if i % 2 == 0 else 5.6
                 pts.append(QPointF(math.cos(a) * r, math.sin(a) * r))
             p.drawPolygon(pts)
-        else:                                                  # 炸弹 + 火星引信
-            p.setBrush(QColor("#2B2D42"))
+        elif emo == "🧲":                                      # 2.5D U形磁铁
+            p.setPen(QPen(QColor("#FF6B8A"), 4.2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawArc(QRectF(-8, -8, 16, 16), 0, 180 * 16)
+            p.drawLine(QPointF(-8, 0), QPointF(-8, 7))
+            p.drawLine(QPointF(8, 0), QPointF(8, 7))
+            p.setPen(QPen(QColor("#CED4DA"), 4.2))
+            p.drawLine(QPointF(-8, 5), QPointF(-8, 8))
+            p.drawLine(QPointF(8, 5), QPointF(8, 8))
+        elif emo == "🛡️":                                      # 2.5D 蓝晶护盾
+            p.setPen(QPen(QColor("#E7F5FF"), 1.6))
+            p.setBrush(clay_brush(0, 0, 11, 12, QColor("#339AF0")))
+            p.drawPolygon([QPointF(0, -11), QPointF(10, -6), QPointF(8, 5), QPointF(0, 11), QPointF(-8, 5), QPointF(-10, -6)])
+        else:
+            p.setBrush(clay_brush(0, 2, 11, 11, QColor("#343A40")))
             p.drawEllipse(QPointF(0, 2), 10.5, 10.5)
             p.setPen(QPen(QColor("#ADB5BD"), 2.0))
             p.drawLine(QPointF(4, -7), QPointF(9, -13))
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QColor("#FF6B6B"))
-            p.drawEllipse(QPointF(10, -14), 3.6, 3.6)
+            p.drawEllipse(QPointF(10, -14), 3.8, 3.8)
             p.setBrush(QColor("#FFD43B"))
-            p.drawEllipse(QPointF(10, -14), 1.8, 1.8)
+            p.drawEllipse(QPointF(10, -14), 1.9, 1.9)
         p.restore()
 
     def paintEvent(self, _e) -> None:
@@ -525,23 +590,34 @@ class _SnackStage(QWidget):
         else:
             bg.setColorAt(0, QColor("#E7F5FF"))
             bg.setColorAt(1, QColor("#FFF0F6"))
-        p.setPen(Qt.PenStyle.NoPen)
+        p.setPen(QPen(QColor("#FFD43B"), 3.0) if self.fever_s > 0 else Qt.PenStyle.NoPen)
         p.setBrush(QBrush(bg))
-        p.drawRoundedRect(QRectF(0, 0, self.W, self.H), 16, 16)
+        p.drawRoundedRect(QRectF(1.5, 1.5, self.W - 3, self.H - 3), 16, 16)
 
-        # 地面草坪/桌面
-        p.setBrush(QColor(255, 255, 255, 26) if is_dark() else QColor(255, 255, 255, 160))
-        p.drawRoundedRect(QRectF(0, self.H - 36, self.W, 36), 12, 12)
+        # 2.5D 立体地面台面 + 宠物投影
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(255, 255, 255, 32) if is_dark() else QColor(255, 255, 255, 175))
+        p.drawRoundedRect(QRectF(8, self.H - 38, self.W - 16, 30), 12, 12)
+        p.setBrush(QColor(0, 0, 0, 50 if is_dark() else 36))
+        p.drawEllipse(QPointF(self.px, self.H - 22), 34, 8)
 
-        # 掉落零食(矢量绘制,100% 可见)
+        # 掉落零食(2.5D 矢量绘制)
         for it in self.drops:
             self._paint_drop(p, it)
 
-        # 2.5D 宠物本体
+        # 2.5D 宠物本体 + 护盾/磁铁光环
         p.save()
         p.translate(self.px - TypingPet.W / 2, self.H - TypingPet.EDGE - 22)
-        self.pet._paint_pet(p, time.monotonic(), "happy" if self.combo >= 3 else "idle")
+        self.pet._paint_pet(p, time.monotonic(), "happy" if (self.combo >= 3 or self.fever_s > 0) else "idle")
         p.restore()
+        if self.shield:
+            p.setPen(QPen(QColor(51, 154, 240, 210), 2.2))
+            p.setBrush(QColor(116, 192, 252, 42))
+            p.drawEllipse(QPointF(self.px, self.H - 46), 44, 34)
+        if self.magnet_s > 0:
+            p.setPen(QPen(QColor(255, 107, 138, 170), 1.8, Qt.PenStyle.DashLine))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawEllipse(QPointF(self.px, self.H - 46), 54, 42)
 
         # 飘字得分
         pf = QFont(self.font())
@@ -552,7 +628,7 @@ class _SnackStage(QWidget):
             c = QColor(pop["col"])
             c.setAlphaF(max(0.0, min(1.0, pop["life"])))
             p.setPen(c)
-            p.drawText(QRectF(pop["x"] - 32, pop["y"] - 12, 64, 24), pop["t"],
+            p.drawText(QRectF(pop["x"] - 42, pop["y"] - 12, 84, 24), pop["t"],
                        QTextOption(Qt.AlignmentFlag.AlignCenter))
 
         # 顶部 HUD
@@ -561,8 +637,15 @@ class _SnackStage(QWidget):
         hud_f.setBold(True)
         p.setFont(hud_f)
         p.setPen(QColor("#FFFFFF" if is_dark() else "#1D1D1F"))
-        p.drawText(QRectF(14, 10, 220, 24), f"得分:{self.score}   连击:×{self.combo}")
-        p.drawText(QRectF(self.W - 140, 10, 126, 24), f"⏱ {self.left_s:0.1f}s",
+        tags = ""
+        if self.fever_s > 0:
+            tags += f"  🔥2x({self.fever_s:0.1f}s)"
+        if self.magnet_s > 0:
+            tags += f"  🧲({self.magnet_s:0.1f}s)"
+        if self.shield:
+            tags += "  🛡️"
+        p.drawText(QRectF(14, 10, 340, 24), f"得分:{self.score}  连击:×{self.combo}{tags}")
+        p.drawText(QRectF(self.W - 120, 10, 106, 24), f"⏱ {self.left_s:0.1f}s",
                    QTextOption(Qt.AlignmentFlag.AlignRight))
         p.end()
 
@@ -623,3 +706,292 @@ class SnackCatchDialog(Dialog):
         if hasattr(self.win, "pet"):
             self.win.pet.celebrate()
             self.win.pet.say(f"接了 {score} 分零食,超满足~", 2.8)
+
+
+class _CloudJumpStage(QWidget):
+    """3.2 新增 2.5D 萌宠小游戏「云端跳跳乐」:操控 2.5D 穿搭萌宠在立体黏土云朵上不断向上跳跃。"""
+    W, H = 460, 400
+
+    def __init__(self, parent, growth: PetGrowth, species: str, on_finish) -> None:
+        super().__init__(parent)
+        self.growth = growth
+        self.species = species
+        self.on_finish = on_finish
+        self.setFixedSize(self.W, self.H)
+        self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.pet = TypingPet(None)
+        self.pet.bare = True
+        self.pet.centered = True
+        self.pet.visitor = True
+        self.pet.growth = growth
+        self.pet.set_species(species)
+        self.pet.resize(TypingPet.W, TypingPet.H)
+
+        self.px, self.py = self.W / 2.0, self.H - 70.0
+        self.target_x = self.px
+        self.vy = 0.0
+        self.keys: set[int] = set()
+        self.running = False
+        self.score = 0
+        self.height_pts = 0
+        self.star_pts = 0
+        self.clouds: list[dict] = []
+        self.stars: list[dict] = []
+        self.pops: list[dict] = []
+        self._last = time.monotonic()
+        self.timer = QTimer(self)
+        self.timer.setInterval(20)
+        self.timer.timeout.connect(self._step)
+
+    def start_game(self) -> None:
+        self.score = self.height_pts = self.star_pts = 0
+        self.px = self.target_x = self.W / 2.0
+        self.py = self.H - 72.0
+        self.vy = -440.0
+        self.clouds = [{"x": self.W / 2.0, "y": self.H - 42.0, "w": 110.0, "kind": "normal", "vx": 0.0}]
+        y = self.H - 108.0
+        while y > -40:
+            self._spawn_cloud(y)
+            y -= random.uniform(54.0, 74.0)
+        self.stars.clear()
+        self.pops.clear()
+        self.running = True
+        self._last = time.monotonic()
+        self.timer.start()
+        self.setFocus()
+        self.update()
+
+    def _spawn_cloud(self, y: float) -> None:
+        kind = random.choices(("normal", "spring", "moving", "storm"), weights=(62, 16, 15, 7))[0]
+        cx = random.uniform(56.0, self.W - 56.0)
+        vx = random.choice((-65.0, 65.0)) if kind == "moving" else 0.0
+        self.clouds.append({"x": cx, "y": y, "w": 84.0 if kind != "storm" else 74.0, "kind": kind, "vx": vx})
+        if kind != "storm" and random.random() < 0.34:
+            self.stars.append({"x": cx, "y": y - 28.0})
+
+    def mouseMoveEvent(self, e) -> None:
+        pos = e.position() if hasattr(e, "position") else e.pos()
+        self.target_x = max(24.0, min(self.W - 24.0, float(pos.x())))
+
+    def keyPressEvent(self, e) -> None:
+        self.keys.add(e.key())
+
+    def keyReleaseEvent(self, e) -> None:
+        self.keys.discard(e.key())
+
+    def _step(self) -> None:
+        now = time.monotonic()
+        dt = min(0.04, max(0.005, now - self._last))
+        self._last = now
+        if not self.running:
+            return
+        if Qt.Key.Key_Left in self.keys or Qt.Key.Key_A in self.keys:
+            self.target_x = max(24.0, self.target_x - 340 * dt)
+        if Qt.Key.Key_Right in self.keys or Qt.Key.Key_D in self.keys:
+            self.target_x = min(self.W - 24.0, self.target_x + 340 * dt)
+        dx = self.target_x - self.px
+        self.px += dx * min(1.0, dt * 13.0)
+        self.pet.pose3d.yaw = max(-0.42, min(0.42, dx * 0.012))
+        self.pet.pose3d.step(now, sleeping=False)
+
+        for c in self.clouds:
+            if c["vx"]:
+                c["x"] += c["vx"] * dt
+                if c["x"] < 52 or c["x"] > self.W - 52:
+                    c["vx"] = -c["vx"]
+
+        prev_y = self.py
+        self.vy += 940.0 * dt
+        self.py += self.vy * dt
+
+        # 下落踩云判定
+        if self.vy > 0:
+            for c in self.clouds:
+                if abs(self.px - c["x"]) < c["w"] * 0.56 and prev_y <= c["y"] + 8 and self.py >= c["y"] - 6:
+                    if c["kind"] == "storm":
+                        self.vy = -300.0
+                        self.star_pts = max(0, self.star_pts - 15)
+                        self.pops.append({"t": "⚡ -15", "x": c["x"], "y": c["y"] - 14, "life": 0.9, "col": "#FF6B6B"})
+                        self.pet.pose3d.impulse(-0.22)
+                    elif c["kind"] == "spring":
+                        self.vy = -660.0
+                        self.pops.append({"t": "🚀 超级弹射!", "x": c["x"], "y": c["y"] - 14, "life": 1.0, "col": "#FFD43B"})
+                        self.pet.pose3d.impulse(0.32)
+                    else:
+                        self.vy = -445.0
+                        self.pet.pose3d.impulse(0.18)
+                    break
+
+        # 吃星星
+        kept_stars = []
+        for s in self.stars:
+            if math.hypot(self.px - s["x"], (self.py - 18) - s["y"]) < 30:
+                self.star_pts += 25
+                self.pops.append({"t": "⭐ +25", "x": s["x"], "y": s["y"], "life": 0.9, "col": "#FFD43B"})
+                continue
+            kept_stars.append(s)
+        self.stars = kept_stars
+
+        # 镜头上移
+        if self.py < self.H * 0.44:
+            shift = self.H * 0.44 - self.py
+            self.py = self.H * 0.44
+            self.height_pts += int(shift * 0.35)
+            for c in self.clouds:
+                c["y"] += shift
+            for s in self.stars:
+                s["y"] += shift
+            for pop in self.pops:
+                pop["y"] += shift
+            self.clouds = [c for c in self.clouds if c["y"] < self.H + 30]
+            self.stars = [s for s in self.stars if s["y"] < self.H + 30]
+            top_y = min((c["y"] for c in self.clouds), default=0.0)
+            while top_y > -30:
+                top_y -= random.uniform(56.0, 76.0)
+                self._spawn_cloud(top_y)
+
+        self.score = self.height_pts + self.star_pts
+        for pop in self.pops:
+            pop["y"] -= 28 * dt
+            pop["life"] -= dt
+        self.pops = [pop for pop in self.pops if pop["life"] > 0]
+
+        if self.py > self.H + 45:
+            self.running = False
+            self.timer.stop()
+            self.update()
+            self.on_finish(self.score)
+            return
+        self.update()
+
+    def _paint_cloud(self, p: QPainter, c: dict) -> None:
+        x, y, w, kind = c["x"], c["y"], c["w"], c["kind"]
+        col = (QColor("#FFD43B") if kind == "spring" else
+               QColor("#495057") if kind == "storm" else
+               QColor("#A5D8FF") if kind == "moving" else QColor("#FFFFFF"))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(0, 0, 0, 38))
+        p.drawEllipse(QPointF(x, y + 8), w * 0.46, 7.5)
+        p.setPen(contour_pen(col, 1.3))
+        p.setBrush(clay_brush(x, y, w * 0.5, 13, col))
+        p.drawRoundedRect(QRectF(x - w / 2, y - 8, w, 17), 9, 9)
+        p.drawEllipse(QPointF(x - w * 0.22, y - 7), 15, 11)
+        p.drawEllipse(QPointF(x + w * 0.16, y - 8), 17, 12)
+        if kind == "spring":
+            p.setPen(QPen(QColor("#E8590C"), 2.0))
+            p.drawLine(QPointF(x - 10, y - 10), QPointF(x + 10, y - 10))
+        elif kind == "storm":
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor("#FFD43B"))
+            p.drawPolygon([QPointF(x - 2, y + 6), QPointF(x + 4, y + 6), QPointF(x - 1, y + 16), QPointF(x - 5, y + 11)])
+
+    def paintEvent(self, _e) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        bg = QLinearGradient(0, 0, 0, self.H)
+        if is_dark():
+            bg.setColorAt(0, QColor("#141933"))
+            bg.setColorAt(1, QColor("#2B244D"))
+        else:
+            bg.setColorAt(0, QColor("#A5D8FF"))
+            bg.setColorAt(1, QColor("#FFF0F6"))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(bg))
+        p.drawRoundedRect(QRectF(0, 0, self.W, self.H), 16, 16)
+
+        for c in self.clouds:
+            self._paint_cloud(p, c)
+
+        # 2.5D 漂浮星星
+        for s in self.stars:
+            p.save()
+            p.translate(s["x"], s["y"])
+            p.setPen(QPen(QColor("#4A3B32"), 1.3))
+            p.setBrush(clay_brush(0, 0, 10, 10, QColor("#FFD43B")))
+            pts = [QPointF(math.cos(math.radians(-90 + i * 36)) * (10.5 if i % 2 == 0 else 4.8),
+                           math.sin(math.radians(-90 + i * 36)) * (10.5 if i % 2 == 0 else 4.8)) for i in range(10)]
+            p.drawPolygon(pts)
+            p.restore()
+
+        # 2.5D 穿搭萌宠
+        p.save()
+        p.translate(self.px - TypingPet.W / 2, self.py - TypingPet.EDGE)
+        self.pet._paint_pet(p, time.monotonic(), "happy" if self.vy < -260 else "idle")
+        p.restore()
+
+        pf = QFont(self.font())
+        pf.setPointSizeF(10.5)
+        pf.setBold(True)
+        p.setFont(pf)
+        for pop in self.pops:
+            c = QColor(pop["col"])
+            c.setAlphaF(max(0.0, min(1.0, pop["life"])))
+            p.setPen(c)
+            p.drawText(QRectF(pop["x"] - 46, pop["y"] - 12, 92, 24), pop["t"],
+                       QTextOption(Qt.AlignmentFlag.AlignCenter))
+
+        p.setPen(QColor("#FFFFFF" if is_dark() else "#1D1D1F"))
+        p.drawText(QRectF(14, 10, 260, 24), f"☁️ 高度分:{self.height_pts}   ⭐ 星星:{self.star_pts}")
+        p.drawText(QRectF(self.W - 126, 10, 112, 24), f"总分:{self.score}", QTextOption(Qt.AlignmentFlag.AlignRight))
+        p.end()
+
+
+class CloudJumpDialog(Dialog):
+    """3.2 新增 2.5D 萌宠小游戏窗口:云端跳跳乐。"""
+
+    def __init__(self, win) -> None:
+        super().__init__(win, "云端跳跳乐")
+        self.win = win
+        self.g: PetGrowth = win.pet_growth
+        self.setFixedWidth(510)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(24, 20, 24, 18)
+        lay.setSpacing(10)
+        lay.addWidget(label("☁️ 2.5D 云端跳跳乐", "dialogTitle", center=True))
+        self.sub = label(f"移动鼠标或按 A / D 控制 {self.g.name} 踩白云往上跳,踩金云弹射,躲雷云!历史最高:{self.g.cloud_best} 分",
+                         "hint", center=True, wrap=True)
+        lay.addWidget(self.sub)
+
+        self.stage = _CloudJumpStage(self, self.g, win.fun.get("pet") or "cat", self._on_finish)
+        lay.addWidget(self.stage, 0, Qt.AlignmentFlag.AlignHCenter)
+
+        row = QHBoxLayout()
+        self.start_btn = button("开始起跳", "primary", self._start, 110)
+        row.addWidget(self.start_btn)
+        row.addStretch(1)
+        row.addWidget(button("关闭", "", self.accept, 84))
+        lay.addLayout(row)
+
+    def _stop(self) -> None:
+        self.stage.running = False
+        self.stage.timer.stop()
+
+    def closeEvent(self, e) -> None:
+        self._stop()
+        super().closeEvent(e)
+
+    def reject(self) -> None:
+        self._stop()
+        super().reject()
+
+    def accept(self) -> None:
+        self._stop()
+        super().accept()
+
+    def _start(self) -> None:
+        self.start_btn.setEnabled(False)
+        self.start_btn.setText("跳跃中…")
+        self.stage.start_game()
+
+    def _on_finish(self, score: int) -> None:
+        gain, ups = self.g.record_cloud_score(score)
+        self.sub.setText(f"本局得分 {score} 分!获得 +{gain} 经验、心情 +16,历史最高:{self.g.cloud_best} 分")
+        self.start_btn.setEnabled(True)
+        self.start_btn.setText("再跳一局")
+        if ups and hasattr(self.win, "_pet_level_up"):
+            self.win._pet_level_up()
+        if hasattr(self.win, "pet"):
+            self.win.pet.celebrate()
+            self.win.pet.say(f"在云端跳了 {score} 分! ☁️", 2.8)

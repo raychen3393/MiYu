@@ -425,6 +425,8 @@ class PetMixin:
             return
         self.pet.pat()
         self.pet_growth.cheer(3)
+        if self.pet_growth.custom_lines and random.random() < 0.45:
+            self.pet.say(random.choice(self.pet_growth.custom_lines), 2.8)
         if self.pet_growth.pat():
             self._pet_level_up()
         self._show_achievements()
@@ -622,6 +624,37 @@ class PetMixin:
         fm.addAction(f"🏆  成就墙和称号({len(g.badges)}/{len(BADGES)}" + (f" · 「{t}」" if t else "") + ")", self.show_wall)
         fm.addAction(f"🎰  抽卡({g.tickets} 张券)", self.show_gacha)
         fm.addAction(f"💞  宠物的朋友({len(g.friends)})", self.show_friends)
+        from ..fun import BUBBLE_AURAS
+        aura_m = make_menu(fm)
+        aura_m.setTitle("✨ 气泡边缘特效(12 款)")
+        a0 = aura_m.addAction("关闭边缘特效")
+        a0.setCheckable(True)
+        a0.setChecked(not g.aura)
+        a0.triggered.connect(lambda: g.set_aura(""))
+        for aid, aname, lv, _col in BUBBLE_AURAS:
+            if g.has_aura(aid):
+                act = aura_m.addAction(aname)
+                act.setCheckable(True)
+                act.setChecked(g.aura == aid)
+                act.triggered.connect(lambda _=False, i=aid: g.set_aura(i))
+            else:
+                tag = "扭蛋限定" if lv >= 999 else f"宠物 Lv.{lv} 或抽卡"
+                aura_m.addAction(f"🔒 {aname}  ·  {tag}").setEnabled(False)
+        fm.addMenu(aura_m)
+        disp_m = make_menu(fm)
+        disp_m.setTitle("🔤 聊天字号与间距")
+        for px, dname in ((13, "字号:小 (13px)"), (14, "字号:标准 (14px)"), (16, "字号:大 (16px)")):
+            act = disp_m.addAction(dname)
+            act.setCheckable(True)
+            act.setChecked(self.fun.get("font_px", 14) == px)
+            act.triggered.connect(lambda _=False, v=px: self.set_chat_font_size(v))
+        disp_m.addSeparator()
+        for cmp, dname in ((False, "气泡间距:舒适"), (True, "气泡间距:紧凑")):
+            act = disp_m.addAction(dname)
+            act.setCheckable(True)
+            act.setChecked(bool(self.fun.get("compact_bubbles", False)) == cmp)
+            act.triggered.connect(lambda _=False, v=cmp: self.set_bubble_density(v))
+        fm.addMenu(disp_m)
         fx = make_menu(fm)
         fx.setTitle("打字特效")
         for fid, name, lv in FX_THEMES:

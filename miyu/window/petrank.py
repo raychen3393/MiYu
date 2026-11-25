@@ -100,7 +100,7 @@ class PetRankMixin:
         if self.pr_week[0] != wk:                       # 新的一周:从现在的经验开始算本周成长
             self.pr_week = (wk, g.xp)
         card = PR.make_card(self.me.get("id", ""), self.me.get("nick", ""), self.pet.species, g.name, g.xp, wk,
-                            self.pr_week[1], list(g.wear))
+                            self.pr_week[1], list(g.wear), snack_best=g.snack_best, cloud_best=g.cloud_best)
         if sign:
             try:
                 card = PR.sign_card(card, self.core.identity)
@@ -274,7 +274,8 @@ class PetRankWindow(Dialog):
         root.setSpacing(10)
         self.title = label("", "dialogTitle")
         root.addWidget(self.title)
-        self.tabs = Segmented([("level", "等级榜"), ("week", "本周成长"), ("gpet", "群宠物贡献")])
+        self.tabs = Segmented([("level", "等级榜"), ("week", "本周成长"), ("snack", "🎮 接零食"),
+                               ("cloud", "☁️ 跳跳乐"), ("gpet", "群宠物")])
         self.tabs.changed.connect(lambda _k: self.refresh(force=True))
         root.addWidget(self.tabs)
         self.rule = label("", "faint", wrap=True)
@@ -312,27 +313,37 @@ class PetRankWindow(Dialog):
         self.rule.setText({
             "level": "按宠物等级排,同级比累计经验。每个人的名片都用自己的身份签过名,别人冒充不了、也改不了;"
                      "不在线的人显示最后一次的数据。",
-            "week": "按本周(本机时间周一 0:00 起)涨的经验排。每周一重新开始。"}[kind]
-            + "  ⚠ = 经验涨得太快,可能用了改过的软件。")
-        sig = (kind, tuple((r["id"], r["lv"], r["xp"], r["gain"], r["online"], r["nick"], r["sus"]) for r in rows))
+            "week": "按本周(本机时间周一 0:00 起)涨的经验排。每周一重新开始。",
+            "snack": "按「接零食大作战」历史最高分排,看看谁手速最快!",
+            "cloud": "按「2.5D 云端跳跳乐」历史最高分排,看看谁跳得最高!"}[kind]
+            + ("  ⚠ = 经验涨得太快,可能用了改过的软件。" if kind in ("level", "week") else ""))
+        sig = (kind, tuple((r["id"], r["lv"], r["xp"], r["gain"], r["sb"], r["cb"], r["online"], r["nick"], r["sus"]) for r in rows))
         if sig != self._sig or force:
             self._sig = sig
             clear_layout(self.list)
             if not rows:
-                empty = "这周还没有人的宠物长经验。" if kind == "week" else "群里还没有人的宠物名片。等大家上线一会儿就有了。"
+                empty = {"week": "这周还没有人的宠物长经验。",
+                         "snack": "群里还没有「接零食大作战」高分记录,快去开一局抢占榜一!",
+                         "cloud": "群里还没有「云端跳跳乐」高分记录,快去起跳抢占榜一!"}.get(
+                    kind, "群里还没有人的宠物名片。等大家上线一会儿就有了。")
                 self.list.addWidget(label(empty, "gmEmpty", wrap=True, center=True))
             for r in rows[:100]:
                 self.list.addWidget(self._row(r, kind))
             self.list.addStretch(1)
         rank, mine, above = PR.rank_of(rows, self.w.me.get("id", ""))
         if mine is None:
-            self.me_text.setText("你还没上这个榜。" + ("这周多聊聊天、喂喂宠物就能上!" if kind == "week" else "打开宠物就能上榜。"))
+            self.me_text.setText("你还没上这个榜。" + ("去玩一局就能立刻上榜!" if kind in ("snack", "cloud") else
+                                                     ("这周多聊聊天、喂喂宠物就能上!" if kind == "week" else "打开宠物就能上榜。")))
         elif above is None:
             self.me_text.setText(f"你排第 {rank} 名,{self._score(mine, kind)} —— 全群第一!" if rank == 1 else
                                  f"你排第 {rank} 名,{self._score(mine, kind)}")
         else:
             if kind == "week":
                 gap = f"还差 {above['gain'] - mine['gain']:,} 经验"
+            elif kind == "snack":
+                gap = f"还差 {above['sb'] - mine['sb']:,} 分"
+            elif kind == "cloud":
+                gap = f"还差 {above['cb'] - mine['cb']:,} 分"
             elif above["lv"] > mine["lv"]:
                 gap = f"还差 {above['lv'] - mine['lv']} 级(约 {above['xp'] - mine['xp']:,} 经验)"
             else:
@@ -341,7 +352,13 @@ class PetRankWindow(Dialog):
 
     @staticmethod
     def _score(r: dict, kind: str) -> str:
-        return f"本周 +{r['gain']:,} 经验" if kind == "week" else f"{r['pet']} Lv.{r['lv']}"
+        if kind == "week":
+            return f"本周 +{r['gain']:,} 经验"
+        if kind == "snack":
+            return f"接零食 {r['sb']:,} 分"
+        if kind == "cloud":
+            return f"跳跳乐 {r['cb']:,} 分"
+        return f"{r['pet']} Lv.{r['lv']}"
 
     def _refresh_gpet(self, force: bool) -> None:
         conv = self.conv
@@ -396,6 +413,10 @@ class PetRankWindow(Dialog):
         lay.addLayout(col, 1)
         if kind == "week":
             big, small = f"+{r['gain']:,}", f"Lv.{r['lv']}"
+        elif kind == "snack":
+            big, small = f"{r['sb']:,} 分", f"Lv.{r['lv']}"
+        elif kind == "cloud":
+            big, small = f"{r['cb']:,} 分", f"Lv.{r['lv']}"
         else:
             big, small = f"Lv.{r['lv']}", f"{r['xp']:,} 经验"
         right = QVBoxLayout()

@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLineEdit, QStac
 from ..dialogs import Dialog
 from ..gomoku.widgets import Segmented, elide
 from ..gomoku.window import avatar_label, clear_layout, scroll_list
+from ..pet3d import clay_brush, contour_pen
 from ..theme import T, is_dark
 from ..ui import button, label, peer_avatar
 from . import words as WB
@@ -488,6 +489,79 @@ class SpyRoom(QWidget):
         self.inv_list.addStretch(1)
 
 
+class _SpyRoundTable(QWidget):
+    """3.2 「谁是卧底」2.5D 萌宠头像圆桌视图:展示玩家围坐 2.5D 圆桌、发言高亮光圈与出局状态。"""
+    PALETTE = ("#FF8787", "#74C0FC", "#69DB7C", "#FFD43B", "#B197FC", "#FFA94D", "#F783AC", "#63E6BE", "#A5D8FF", "#E599F7")
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setFixedHeight(168)
+        self._seats: list[dict] = []
+
+    def set_seats(self, seats: list[dict]) -> None:
+        self._seats = seats
+        self.update()
+
+    def paintEvent(self, _e) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        w, h = self.width(), self.height()
+        cx, cy = w / 2.0, h / 2.0 + 4.0
+        rx, ry = min(w * 0.34, 155.0), 42.0
+        # 2.5D 立体圆桌投影 + 桌沿厚度 + 暖木/暗夜桌面
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(0, 0, 0, 55))
+        p.drawEllipse(QPointF(cx, cy + 9), rx + 4, ry + 3)
+        p.setBrush(QColor("#2E2246" if is_dark() else "#B88A5A"))
+        p.drawEllipse(QPointF(cx, cy + 5), rx, ry)
+        tcol = QColor("#4A3A70" if is_dark() else "#E9CFA8")
+        p.setPen(contour_pen(tcol, 1.4))
+        p.setBrush(clay_brush(cx, cy, rx, ry, tcol))
+        p.drawEllipse(QPointF(cx, cy), rx, ry)
+
+        n = len(self._seats)
+        if n <= 0:
+            p.end()
+            return
+        f = QFont(self.font())
+        f.setPixelSize(11)
+        f.setBold(True)
+        p.setFont(f)
+        for i, s in enumerate(self._seats):
+            ang = -math.pi / 2 + i * (math.tau / n)
+            sx = cx + math.cos(ang) * (rx + 26)
+            sy = cy + math.sin(ang) * (ry + 24)
+            col = QColor(self.PALETTE[i % len(self.PALETTE)])
+            p.save()
+            if s.get("out"):
+                p.setOpacity(0.42)
+            # 发言者发光金环
+            if s.get("speaking"):
+                p.setPen(QPen(QColor("#FFD43B"), 3.0))
+                p.setBrush(QColor(255, 212, 59, 55))
+                p.drawEllipse(QPointF(sx, sy), 19.5, 19.5)
+            # 2.5D 黏土萌宠圆头头像(带小耳朵 + 高光 + 呆萌眼)
+            p.setPen(contour_pen(col, 1.3))
+            p.setBrush(clay_brush(sx, sy, 14, 14, col))
+            for es in (-1, 1):
+                p.drawEllipse(QPointF(sx + es * 8.5, sy - 10.5), 4.5, 5.2)
+            p.drawEllipse(QPointF(sx, sy), 13.5, 12.5)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor("#2B2D42"))
+            p.drawEllipse(QPointF(sx - 4.2, sy - 1), 1.6, 1.9)
+            p.drawEllipse(QPointF(sx + 4.2, sy - 1), 1.6, 1.9)
+            p.setBrush(QColor("#FF8FAB"))
+            p.drawEllipse(QPointF(sx - 6.8, sy + 2.5), 2.0, 1.2)
+            p.drawEllipse(QPointF(sx + 6.8, sy + 2.5), 2.0, 1.2)
+            # 昵称
+            p.setPen(QColor("#FFFFFF" if is_dark() else "#2B2D42"))
+            nick = str(s.get("nick", ""))[:5]
+            p.drawText(QRectF(sx - 30, sy + 14, 60, 16), nick, QTextOption(Qt.AlignmentFlag.AlignCenter))
+            p.restore()
+        p.end()
+
+
 # ====================================================================== 游戏页
 class SpyGame(QWidget):
     def __init__(self, sw: "SpyWindow") -> None:
@@ -513,6 +587,8 @@ class SpyGame(QWidget):
         leftcol.setSpacing(10)
         self.card = WordCard()
         leftcol.addWidget(self.card, 0, Qt.AlignmentFlag.AlignHCenter)
+        self.round_table = _SpyRoundTable()
+        leftcol.addWidget(self.round_table)
         gw = QWidget()
         self.grid = QGridLayout(gw)
         self.grid.setSpacing(8)
@@ -667,6 +743,12 @@ class SpyGame(QWidget):
         self.ready_btn.setText("等别人…" if c.me in c.ready else "讨论完了")
         # 座位
         outs = {o["id"]: o["role"] for o in c.out}
+        if hasattr(self, "round_table"):
+            self.round_table.set_seats([
+                {"id": pid, "nick": c.nick(pid), "out": pid in outs,
+                 "speaking": c.phase == "desc" and c.turn == pid}
+                for pid in self.seats
+            ])
         for pid, card in self.seats.items():
             mine_said = [s["text"] for s in c.said if s["by"] == pid and s["r"] == c.round]
             prev = [s["text"] for s in c.said if s["by"] == pid and s["r"] < c.round]

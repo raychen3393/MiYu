@@ -112,6 +112,9 @@ def build_specs(w) -> list[Spec]:
     snd_opts = locked("snd", S.SOUND_THEMES)
     skin_base = locked("skin", theme.SKINS)
     skin_opts = lambda: [("", "经典", True)] + skin_base()                       # noqa: E731
+    from ..fun import BUBBLE_AURAS
+    aura_base = locked("aura", BUBBLE_AURAS)
+    aura_opts = lambda: [("", "关闭边缘特效", True)] + aura_base()               # noqa: E731
     effects = [("balloons", "🎈 生日快乐"), ("confetti", "🎉 恭喜"), ("fireworks", "🎆 新年快乐"), ("hearts", "❤️ 爱你"),
                ("snow", "❄️ 下雪"), ("rain", "🌧 下雨"), ("stars", "🌙 晚安"), ("flames", "💪 加油"), ("laugh", "😂 哈哈哈")]
 
@@ -129,6 +132,9 @@ def build_specs(w) -> list[Spec]:
         item = next((x for x in theme.SKINS if x[0] == v), None)
         if item is not None and g.has("skin", v, item[2]):
             w.set_skin(v)
+
+    def pick_aura(v):
+        g.set_aura(v or "")
 
     return [
         # ---------------------------------------------------------------- 账户
@@ -217,6 +223,14 @@ def build_specs(w) -> list[Spec]:
              set=lambda on: w.set_fun("combo", on)),
         Spec("chat", "特效", "气泡皮肤", "对方看到的你的消息也是这个皮肤", "choice",
              get=lambda: w.fun.get("skin") or "", set=pick_skin, options=skin_opts),
+        Spec("chat", "特效", "✨ 气泡边缘特效", "烈焰燃边、雷电电弧、赛博霓虹等 12 款动态边缘粒子(不遮挡文字,对方也看得到)",
+             "choice", get=lambda: g.aura or "", set=pick_aura, options=aura_opts,
+             keys="火焰 烈焰 雷电 霓虹 樱花 边缘 粒子 气泡特效"),
+        Spec("chat", "其它", "聊天字号", "调整聊天消息文字大小", "choice",
+             get=lambda: w.fun.get("font_px", 14), set=w.set_chat_font_size,
+             options=[(13, "小 (13px)"), (14, "标准 (14px)"), (16, "大 (16px)")], keys="字体 字号 大小"),
+        Spec("chat", "其它", "紧凑气泡间距", "缩小消息上下间距,一屏看更多聊天记录", "switch",
+             get=lambda: bool(w.fun.get("compact_bubbles", False)), set=w.set_bubble_density, keys="密度 间距 紧凑"),
         Spec("chat", "其它", "群排行榜", "每周一在群里公布上周的话痨榜等", "switch",
              get=lambda: bool(w.fun.get("rank", True)), set=lambda on: w.set_fun("rank", on)),
         Spec("chat", "其它", "聊天年报", "只统计数量,不记录内容", action="查看…", set=w.show_report, keys="统计"),

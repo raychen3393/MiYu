@@ -45,7 +45,8 @@ SPECIES = {
 }
 
 # ---------------------------------------------------------------- 宠物养成
-PET_MAX_LEVEL = 50
+PET_MAX_LEVEL = 100
+ANTI_HOLD_LEVEL = 30                    # 30 级及以上拦截长按连发刷经验(30 级以下允许长按)
 DEFAULT_PET_NAME = "团团"
 XP_PER_KEY = 1
 XP_PER_MESSAGE = 12
@@ -126,6 +127,47 @@ ACCESSORIES = [
     ("guitar", "迷你吉他", 5, "hand"),
     ("pixel_shades", "像素墨镜", 99, "face"),
     ("king_robe", "星穹披风", 99, "body"),
+    # 3.2 新增 55~100 级高阶里程碑套装装扮
+    ("star_crown", "星辰法冠", 55, "head"),
+    ("galaxy_cloak", "银河披风", 55, "body"),
+    ("orbit_halo", "星轨光环", 55, "top"),
+    ("top_hat", "复古礼帽", 62, "head"),
+    ("bat_cloak", "蝠翼披风", 62, "body"),
+    ("blood_moon", "绯月光环", 62, "top"),
+    ("jade_crown", "祥云玉冠", 70, "head"),
+    ("crane_robe", "仙鹤羽衣", 70, "body"),
+    ("fly_sword", "灵气浮剑", 70, "hand"),
+    ("shell_crown", "珍珠贝壳冠", 78, "head"),
+    ("mermaid_fin", "极光鱼尾鳍", 78, "body"),
+    ("sea_bubbles", "海洋光环", 78, "top"),
+    ("mech_visor", "战术能量目镜", 85, "face"),
+    ("mech_wings", "推进机甲翼", 85, "body"),
+    ("plasma_halo", "等离子环", 85, "top"),
+    ("dragon_helm", "龙角战盔", 92, "head"),
+    ("flame_wings", "烈焰龙翼", 92, "body"),
+    ("ember_ring", "炽焰星环", 92, "top"),
+    ("eternal_crown", "永恒圣冠", 100, "head"),
+    ("seraph_wings", "创世圣翼", 100, "body"),
+    ("gold_orbit", "鎏金星环", 100, "top"),
+    # 3.2 新增扭蛋机限定潮玩装扮(不卡等级,每日免费券/十连扭直接抽到)
+    ("frog_hood", "青蛙兜帽", 999, "head"),
+    ("umbrella", "透明雨伞", 999, "hand"),
+    ("rain_halo", "水滴光环", 999, "top"),
+    ("cream_hat", "奶油草莓帽", 999, "head"),
+    ("sweet_apron", "甜品围裙", 999, "body"),
+    ("macaron_fx", "飘浮马卡龙", 999, "fx"),
+    ("snapback", "反戴棒球帽", 999, "head"),
+    ("street_phones", "潮酷耳机", 999, "ear"),
+    ("skateboard", "霓虹滑板", 999, "hand"),
+    ("koi_clip", "锦鲤头饰", 999, "ear"),
+    ("lucky_cloak", "祥瑞红披风", 999, "body"),
+    ("coin_halo", "金币福环", 999, "top"),
+    ("retro_visor", "8-bit护目镜", 999, "face"),
+    ("pixel_cape", "8-bit披风", 999, "body"),
+    ("pixel_stars", "像素星光", 999, "fx"),
+    ("bear_hood", "毛绒熊耳帽", 999, "head"),
+    ("plaid_scarf", "格子围巾", 999, "neck"),
+    ("honey_jar", "蜂蜜罐", 999, "hand"),
 ]
 # 套装:(id, 名字, 部件, 集齐后的光效颜色)。一键穿上,集齐有一圈套装光效
 OUTFITS = [
@@ -139,6 +181,21 @@ OUTFITS = [
     ("campus", "元气学院", ("beret", "ribbon_neck", "sweater", "coffee"), "#FF8787"),
     ("street", "潮酷玩家", ("bandana", "round_shades", "overcoat", "gamepad"), "#339AF0"),
     ("rockstar", "节奏达人", ("star_ear", "pixel_shades", "guitar", "music_fx"), "#F06595"),
+    # 3.2 高阶等级里程碑套装 (Lv.55 ~ Lv.100)
+    ("sage", "星辰贤者", ("star_crown", "galaxy_cloak", "orbit_halo"), "#7950F2"),
+    ("vamp", "暗夜伯爵", ("top_hat", "bat_cloak", "blood_moon"), "#E03131"),
+    ("xianxia", "云端仙侠", ("jade_crown", "crane_robe", "fly_sword"), "#20C997"),
+    ("mermaid", "深海人鱼", ("shell_crown", "mermaid_fin", "sea_bubbles"), "#339AF0"),
+    ("mecha", "未来机甲", ("mech_visor", "mech_wings", "plasma_halo"), "#22B8CF"),
+    ("dragon", "炎龙骑士", ("dragon_helm", "flame_wings", "ember_ring"), "#FF6B6B"),
+    ("eternal", "永恒至臻", ("eternal_crown", "seraph_wings", "gold_orbit"), "#FFD43B"),
+    # 3.2 扭蛋限定套装 (不卡等级,免费券即可抽到)
+    ("frog", "雨天青蛙(扭蛋)", ("frog_hood", "umbrella", "rain_halo"), "#51CF66"),
+    ("matcha", "抹茶甜点师(扭蛋)", ("cream_hat", "sweet_apron", "macaron_fx"), "#69DB7C"),
+    ("skater", "街头滑板(扭蛋)", ("snapback", "street_phones", "skateboard"), "#FF922B"),
+    ("koi", "招财锦鲤(扭蛋)", ("koi_clip", "lucky_cloak", "coin_halo"), "#FA5252"),
+    ("retro", "复古像素(扭蛋)", ("retro_visor", "pixel_cape", "pixel_stars"), "#845EF7"),
+    ("teddy", "软萌小熊(扭蛋)", ("bear_hood", "plaid_scarf", "honey_jar"), "#D4A373"),
 ]
 OUTFIT_BY_ID = {o[0]: o for o in OUTFITS}
 SLOTS = [("head", "头饰"), ("ear", "耳边"), ("face", "脸上"), ("neck", "脖子"), ("body", "衣服"), ("top", "头顶"),
@@ -178,6 +235,7 @@ TRICKS = [
     (5, "stretch", "伸懒腰", 1.6), (10, "spin", "转圈圈", 1.1), (15, "heart", "比心", 1.8), (20, "roll", "打滚", 1.8),
     (25, "wave", "挥手", 1.8), (30, "hop", "蹦蹦跳", 1.5), (35, "dance", "跳舞", 2.6), (40, "fly", "飞起来", 2.4),
     (45, "magic", "变魔术", 2.2), (50, "bow", "鞠躬谢幕", 2.0),
+    (60, "meditate", "浮空冥想", 2.4), (80, "blink", "瞬移残影", 1.8), (100, "coronation", "满级星雨", 2.8),
 ]
 TRICK_BY_ID = {t[1]: t for t in TRICKS}
 # 3.1 通行证/签到解锁的特殊趣味动作:(id, 名字, 时长)
@@ -195,6 +253,23 @@ EVOLVE_LEVEL = 20                       # 到 20 级进化:长出小翅膀、额
 # 打字特效主题:(id, 名字, 解锁等级)。也可以抽卡提前拿到
 FX_THEMES = [("spark", "火花", 1), ("sakura", "樱花", 3), ("snow", "雪花", 6), ("star", "星星", 9), ("heart", "爱心", 12)]
 FX_BY_ID = {f[0]: f for f in FX_THEMES}
+
+# 3.2 动态边缘粒子气泡特效:(id, 名字, 解锁等级, 主题色)。999 = 扭蛋限定,完全画在气泡外沿不遮挡文字
+BUBBLE_AURAS = [
+    ("bubble", "🫧 梦幻泡泡", 3, "#74C0FC"),
+    ("sakura", "🌸 樱粉流瓣", 5, "#FF8FAB"),
+    ("frost", "❄️ 霜雪晶芒", 12, "#A5D8FF"),
+    ("heart", "💗 心动粉波", 15, "#FF6B8A"),
+    ("flame", "🔥 烈焰燃边", 22, "#FF6B2B"),
+    ("lightning", "⚡ 雷电电弧", 35, "#339AF0"),
+    ("galaxy", "🌠 银河星漩", 50, "#9775FA"),
+    ("dragon", "🐉 炽龙紫焰", 75, "#AE3EC9"),
+    ("eternal", "👑 鎏金圣焰", 100, "#FFD43B"),
+    ("neon", "🌌 赛博霓虹", 999, "#22B8CF"),
+    ("aurora", "💚 极光幻雾", 999, "#51CF66"),
+    ("prism", "🌈 虹彩星尘", 999, "#F06595"),
+]
+AURA_BY_ID = {a[0]: a for a in BUBBLE_AURAS}
 
 # 抽卡池:(稀有度, 种类, id, 名字)。种类:acc 装扮 / skin 气泡皮肤 / fx 打字特效 / snd 音效主题
 GACHA_POOL = [
@@ -227,6 +302,26 @@ GACHA_POOL = [
     ("R", "acc", "beret", "画家贝雷帽"), ("R", "acc", "coffee", "冰美式"),
     ("SR", "acc", "gamepad", "复古掌机"), ("SR", "acc", "guitar", "迷你吉他"),
     ("SR", "acc", "pixel_shades", "像素墨镜"), ("SSR", "acc", "king_robe", "星穹披风"),
+    # 3.2 扭蛋限定额外服装(不卡等级,每日免费券就能抽到)
+    ("R", "acc", "frog_hood", "青蛙兜帽(扭蛋限定)"), ("R", "acc", "umbrella", "透明雨伞(扭蛋限定)"),
+    ("SR", "acc", "rain_halo", "水滴光环(扭蛋限定)"),
+    ("R", "acc", "cream_hat", "奶油草莓帽(扭蛋限定)"), ("SR", "acc", "sweet_apron", "甜品围裙(扭蛋限定)"),
+    ("SSR", "acc", "macaron_fx", "飘浮马卡龙(扭蛋限定)"),
+    ("R", "acc", "snapback", "反戴棒球帽(扭蛋限定)"), ("SR", "acc", "street_phones", "潮酷耳机(扭蛋限定)"),
+    ("SR", "acc", "skateboard", "霓虹滑板(扭蛋限定)"),
+    ("SR", "acc", "koi_clip", "锦鲤头饰(扭蛋限定)"), ("SR", "acc", "lucky_cloak", "祥瑞红披风(扭蛋限定)"),
+    ("SSR", "acc", "coin_halo", "金币福环(扭蛋限定)"),
+    ("SR", "acc", "retro_visor", "8-bit护目镜(扭蛋限定)"), ("SR", "acc", "pixel_cape", "8-bit披风(扭蛋限定)"),
+    ("SSR", "acc", "pixel_stars", "像素星光(扭蛋限定)"),
+    ("R", "acc", "bear_hood", "毛绒熊耳帽(扭蛋限定)"), ("R", "acc", "plaid_scarf", "格子围巾(扭蛋限定)"),
+    ("SR", "acc", "honey_jar", "蜂蜜罐(扭蛋限定)"),
+    # 3.2 动态边缘气泡特效(抽卡即可提前或限定解锁)
+    ("R", "aura", "bubble", "气泡特效·梦幻泡泡"), ("R", "aura", "sakura", "气泡特效·樱粉流瓣"),
+    ("R", "aura", "frost", "气泡特效·霜雪晶芒"), ("R", "aura", "heart", "气泡特效·心动粉波"),
+    ("SR", "aura", "flame", "气泡特效·烈焰燃边"), ("SR", "aura", "lightning", "气泡特效·雷电电弧"),
+    ("SR", "aura", "galaxy", "气泡特效·银河星漩"), ("SR", "aura", "neon", "气泡特效·赛博霓虹(限定)"),
+    ("SR", "aura", "aurora", "气泡特效·极光幻雾(限定)"), ("SSR", "aura", "dragon", "气泡特效·炽龙紫焰"),
+    ("SSR", "aura", "prism", "气泡特效·虹彩星尘(限定)"), ("SSR", "aura", "eternal", "气泡特效·鎏金圣焰"),
 ]
 GACHA_WEIGHTS = (("N", 55), ("R", 32), ("SR", 11), ("SSR", 2))
 GACHA_DUP_XP = {"R": 60, "SR": 150, "SSR": 500}
@@ -246,7 +341,10 @@ BADGES = [
     ("lv20", "进化见证者", "宠物升到 Lv.20 并进化", lambda g: g.level >= 20),
     ("lv30", "传说降临", "宠物升到 Lv.30", lambda g: g.level >= 30),
     ("lv40", "神话之羽", "宠物升到 Lv.40,第二次进化", lambda g: g.level >= 40),
-    ("lv50", "满级大佬", "宠物升到 Lv.50", lambda g: g.level >= 50),
+    ("lv50", "半百宗师", "宠物升到 Lv.50", lambda g: g.level >= 50),
+    ("lv60", "星辰使者", "宠物升到 Lv.60,进入星辰期", lambda g: g.level >= 60),
+    ("lv80", "苍穹行者", "宠物升到 Lv.80,进入苍穹期", lambda g: g.level >= 80),
+    ("lv100", "永恒至臻", "宠物达到满级 Lv.100", lambda g: g.level >= 100),
     ("s3", "三日之约", "连续打卡 3 天", lambda g: g.streak >= 3),
     ("s7", "全勤一周", "连续打卡 7 天", lambda g: g.streak >= 7),
     ("s30", "风雨无阻", "连续打卡 30 天", lambda g: g.streak >= 30),
@@ -378,7 +476,16 @@ class PetGrowth:
         self.pass_pts = _int("pass_pts")
         self.pass_claimed: set[int] = {x for x in (d.get("pass_claimed") or []) if type(x) is int and 1 <= x <= 30}
         self.snack_best = _int("snack_best")
+        self.cloud_best = _int("cloud_best")
+        aura_raw = d.get("aura")
+        self.aura = aura_raw if isinstance(aura_raw, str) and aura_raw in AURA_BY_ID else ""
+        self.custom_lines: list[str] = [
+            str(x).strip()[:40] for x in (d.get("custom_lines") or []) if isinstance(x, str) and x.strip()
+        ][:10]
+        ow = d.get("off_work")
+        self.off_work = ow if isinstance(ow, str) and re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", ow) else ""
         self.daily.setdefault("snack_xp", _int("snack_xp", daily))
+        self.daily.setdefault("cloud_xp", _int("cloud_xp", daily))
         self.badges = {k: str(v) for k, v in (d.get("badges") or {}).items() if k in BADGE_BY_ID} \
             if isinstance(d.get("badges"), dict) else {}
         self.title = d.get("title") if d.get("title") in self.badges else ""
@@ -563,7 +670,9 @@ class PetGrowth:
         self._roll_day()
         return diary_text(self.daily)
 
-    def tap(self, today: str | None = None) -> int:
+    def tap(self, today: str | None = None, is_repeat: bool = False) -> int:
+        if is_repeat and self.level >= ANTI_HOLD_LEVEL:
+            return 0
         before = self.level
         self._roll_day(today)
         self.taps += 1
@@ -687,6 +796,19 @@ class PetGrowth:
         self.room = rid
         return True
 
+    def has_aura(self, aid: str) -> bool:
+        a = AURA_BY_ID.get(aid)
+        return a is not None and self.has("aura", aid, a[2])
+
+    def set_aura(self, aid: str) -> bool:
+        if not aid:
+            self.aura = ""
+            return True
+        if not self.has_aura(aid):
+            return False
+        self.aura = aid
+        return True
+
     def set_dye(self, slot: str, color: str) -> bool:
         if slot not in {s[0] for s in SLOTS}:
             return False
@@ -722,6 +844,22 @@ class PetGrowth:
         self.daily["snack_xp"] = used + gain
         self.pass_pts += min(25, max(5, score // 8))
         self.joy = clamp(self.joy + 15)
+        before = self.level
+        self.xp += gain
+        self._check(today)
+        return gain, self.level - before
+
+    def record_cloud_score(self, score: int, today: str | None = None) -> tuple[int, int]:
+        """记录「云端跳跳乐」分数,返回 (获得经验, 升了几级)。每天最多从该游戏获得 260 经验。"""
+        self._roll_day(today)
+        score = max(0, int(score))
+        if score > self.cloud_best:
+            self.cloud_best = score
+        used = int(self.daily.get("cloud_xp", 0))
+        gain = min(max(0, 260 - used), max(18, score // 2)) if score > 0 else 0
+        self.daily["cloud_xp"] = used + gain
+        self.pass_pts += min(30, max(6, score // 7))
+        self.joy = clamp(self.joy + 16)
         before = self.level
         self.xp += gain
         self._check(today)
@@ -803,7 +941,8 @@ class PetGrowth:
                 "coat": self.coat, "eyes": self.eyes, "room": self.room, "dye": dict(self.dye),
                 "checkin_days": self.checkin_days, "checkin_last": self.checkin_last,
                 "pass_pts": self.pass_pts, "pass_claimed": sorted(self.pass_claimed),
-                "snack_best": self.snack_best}
+                "snack_best": self.snack_best, "cloud_best": self.cloud_best,
+                "aura": self.aura, "custom_lines": list(self.custom_lines), "off_work": self.off_work}
 
 
 SPARK_COLORS = {
@@ -1251,7 +1390,8 @@ class TypingPet(QWidget):
         p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         now = _now()
         if self.show_room and self.growth.room != "none":
-            paint_diorama(p, self.growth.room, self.width(), self.height(), self.EDGE, now, is_dark())
+            paint_diorama(p, self.growth.room, self.width(), self.height(), self.EDGE, now, is_dark(),
+                          ambient=getattr(self, "ambient_fx", ""))
         mood = self.mood(now)
         if self.bare:
             pass
@@ -2120,6 +2260,147 @@ class TypingPet(QWidget):
             p.setBrush(QColor("#FFF3BF"))
             for sx in (-16, 0, 16):
                 p.drawEllipse(QPointF(cx + sx, y + 7), 1.7, 1.7)
+        # ---- 3.2 高阶 & 扭蛋限定装扮 (2.5D 黏土质感 + 自由染色)
+        for bid, defc, trim in (("galaxy_cloak", "#4C2A85", "#B197FC"), ("bat_cloak", "#2B1B2E", "#E03131"),
+                                ("crane_robe", "#E6FCF5", "#20C997"), ("mermaid_fin", "#339AF0", "#A5F3FC"),
+                                ("lucky_cloak", "#E03131", "#FFD43B"), ("pixel_cape", "#5F3DC4", "#63E6BE"),
+                                ("sweet_apron", "#A9E34B", "#FFF0F6")):
+            if bid in wear:
+                col = self._dye("body", defc)
+                y = self.EDGE - 12
+                p.setPen(QPen(QColor(trim), 1.6))
+                p.setBrush(clay_brush(cx, y + 6, 36, 14, col))
+                cp = QPainterPath(QPointF(cx - 31, y + 3))
+                cp.quadTo(cx, y - 4, cx + 31, y + 3)
+                cp.lineTo(cx + 35, self.EDGE + 2)
+                cp.lineTo(cx - 35, self.EDGE + 2)
+                cp.closeSubpath()
+                p.drawPath(cp)
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor(trim))
+                for sx in (-14, 0, 14):
+                    p.drawEllipse(QPointF(cx + sx, y + 7), 1.8, 1.8)
+        for wid, wcol, wglow in (("mech_wings", "#22B8CF", "#99E9F2"), ("flame_wings", "#FF6B6B", "#FFD43B"),
+                                 ("seraph_wings", "#FFF9DB", "#FFD43B")):
+            if wid in wear:
+                col = self._dye("body", wcol)
+                flap = math.sin(t * 4.2) * 3.5
+                p.setPen(QPen(QColor(wglow), 1.5))
+                p.setBrush(clay_brush(cx, cy, 42, 22, col))
+                for s in (-1, 1):
+                    wp = QPainterPath(QPointF(cx + s * 20, cy + 4))
+                    wp.cubicTo(cx + s * 46, cy - 16 + flap, cx + s * 54, cy + 6 + flap, cx + s * 28, cy + 16)
+                    wp.closeSubpath()
+                    p.drawPath(wp)
+        if "plaid_scarf" in wear:                               # 格子围巾
+            col = self._dye("neck", "#D9480F")
+            ny = self.EDGE - 11
+            p.setPen(thin)
+            p.setBrush(clay_brush(cx, ny, 24, 7, col))
+            p.drawRoundedRect(QRectF(cx - 22, ny - 3, 44, 7.5), 3.5, 3.5)
+            p.setPen(QPen(QColor("#FFF3BF"), 1.2))
+            for sx in (-12, 0, 12):
+                p.drawLine(QPointF(cx + sx, ny - 2.5), QPointF(cx + sx, ny + 4))
+        for fid, fcol, fglow in (("mech_visor", "#15AABF", "#66D9E8"), ("retro_visor", "#7950F2", "#FFD43B")):
+            if fid in wear:
+                col = self._dye("face", fcol)
+                p.setPen(QPen(QColor(fglow), 1.5))
+                p.setBrush(QColor(col.red(), col.green(), col.blue(), 195))
+                p.drawRoundedRect(QRectF(cx - 21, ey - 5.5, 42, 10.5), 3 if fid == "retro_visor" else 5, 3)
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor(255, 255, 255, 165))
+                p.drawRect(QRectF(cx - 15, ey - 3.5, 12, 2.2))
+        if "street_phones" in wear:                             # 潮酷双耳耳机
+            col = self._dye("ear", "#FF922B")
+            p.setPen(QPen(col.darker(125), 1.5))
+            p.setBrush(clay_brush(cx, ey, 28, 10, col))
+            for s in (-1, 1):
+                p.drawRoundedRect(QRectF(cx + s * 25 - 4.5, ey - 7, 9, 14), 4, 4)
+        if "koi_clip" in wear:                                  # 招财锦鲤耳饰
+            col = self._dye("ear", "#FA5252")
+            bx, by = cx - 20, top + 6
+            p.setPen(thin)
+            p.setBrush(clay_brush(bx, by, 9, 5, col))
+            p.drawEllipse(QPointF(bx, by), 7.5, 4.2)
+            p.setBrush(QColor("#FFD43B"))
+            p.drawPolygon([QPointF(bx - 6, by), QPointF(bx - 12, by - 4), QPointF(bx - 12, by + 4)])
+        for hid, hcol, hstyle in (("star_crown", "#7950F2", "crown"), ("jade_crown", "#20C997", "crown"),
+                                  ("shell_crown", "#339AF0", "crown"), ("eternal_crown", "#FFD43B", "crown"),
+                                  ("dragon_helm", "#FF6B6B", "helm"), ("top_hat", "#212529", "tophat"),
+                                  ("frog_hood", "#51CF66", "frog"), ("cream_hat", "#FFF0F6", "cream"),
+                                  ("snapback", "#FF922B", "cap"), ("bear_hood", "#D4A373", "bear")):
+            if hid in wear:
+                col = self._dye("head", hcol)
+                p.setPen(thin)
+                if hstyle == "crown":
+                    p.setBrush(clay_brush(cx, top - 8, 18, 12, col))
+                    cr = QPainterPath(QPointF(cx - 16, top + 1))
+                    cr.lineTo(cx - 19, top - 14)
+                    cr.lineTo(cx - 8, top - 7)
+                    cr.lineTo(cx, top - 19)
+                    cr.lineTo(cx + 8, top - 7)
+                    cr.lineTo(cx + 19, top - 14)
+                    cr.lineTo(cx + 16, top + 1)
+                    cr.closeSubpath()
+                    p.drawPath(cr)
+                    p.setPen(Qt.PenStyle.NoPen)
+                    p.setBrush(QColor("#FFFFFF"))
+                    p.drawEllipse(QPointF(cx, top - 9), 2.8, 2.8)
+                elif hstyle == "helm":
+                    p.setBrush(clay_brush(cx, top - 6, 24, 14, col))
+                    p.drawChord(QRectF(cx - 24, top - 18, 48, 30), 0, 180 * 16)
+                    p.setBrush(QColor("#FFD43B"))
+                    for s in (-1, 1):
+                        p.drawPolygon([QPointF(cx + s * 14, top - 11), QPointF(cx + s * 24, top - 23),
+                                       QPointF(cx + s * 20, top - 7)])
+                elif hstyle == "tophat":
+                    p.setBrush(clay_brush(cx, top - 10, 22, 16, col))
+                    p.drawRoundedRect(QRectF(cx - 22, top - 3, 44, 5), 2.5, 2.5)
+                    p.drawRoundedRect(QRectF(cx - 14, top - 22, 28, 20), 4, 4)
+                    p.setPen(Qt.PenStyle.NoPen)
+                    p.setBrush(QColor("#E03131"))
+                    p.drawRect(QRectF(cx - 14, top - 7, 28, 3.8))
+                elif hstyle == "frog":
+                    p.setBrush(clay_brush(cx, top - 6, 24, 14, col))
+                    p.drawChord(QRectF(cx - 24, top - 16, 48, 28), 0, 180 * 16)
+                    for s in (-1, 1):
+                        p.setBrush(col)
+                        p.drawEllipse(QPointF(cx + s * 12, top - 15), 6.2, 6.2)
+                        p.setBrush(QColor("#FFFFFF"))
+                        p.drawEllipse(QPointF(cx + s * 12, top - 15), 3.6, 3.6)
+                        p.setBrush(QColor("#1D1D1F"))
+                        p.drawEllipse(QPointF(cx + s * 12, top - 15), 1.7, 1.7)
+                elif hstyle == "cream":
+                    p.setBrush(clay_brush(cx, top - 8, 20, 14, col))
+                    p.drawEllipse(QPointF(cx, top - 6), 18, 10)
+                    p.drawEllipse(QPointF(cx, top - 13), 11, 7)
+                    p.setBrush(QColor("#FF6B8A"))
+                    p.drawEllipse(QPointF(cx, top - 19), 5.2, 5.2)
+                elif hstyle == "cap":
+                    p.setBrush(clay_brush(cx, top - 6, 22, 12, col))
+                    p.drawChord(QRectF(cx - 20, top - 15, 40, 24), 0, 180 * 16)
+                    p.drawRoundedRect(QRectF(cx + 8, top - 4, 18, 5), 2.5, 2.5)
+                elif hstyle == "bear":
+                    p.setBrush(clay_brush(cx, top - 6, 23, 13, col))
+                    p.drawChord(QRectF(cx - 23, top - 15, 46, 26), 0, 180 * 16)
+                    for s in (-1, 1):
+                        p.drawEllipse(QPointF(cx + s * 15, top - 14), 6.5, 6.5)
+                        p.setBrush(QColor("#FFF3BF"))
+                        p.drawEllipse(QPointF(cx + s * 15, top - 14), 3.2, 3.2)
+                        p.setBrush(col)
+        for tid_h, hcol in (("orbit_halo", "#B197FC"), ("blood_moon", "#FA5252"), ("sea_bubbles", "#74C0FC"),
+                            ("plasma_halo", "#22B8CF"), ("ember_ring", "#FF922B"), ("gold_orbit", "#FFD43B"),
+                            ("rain_halo", "#4DABF7"), ("coin_halo", "#FCC419")):
+            if tid_h in wear:
+                hy = top - 20 + math.sin(t * 2.8) * 2.5
+                p.setPen(QPen(QColor(hcol), 2.4))
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.drawEllipse(QPointF(cx, hy), 20, 5.5)
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor("#FFFFFF"))
+                ax = cx + math.cos(t * 3.0) * 20
+                ay = hy + math.sin(t * 3.0) * 5.5
+                p.drawEllipse(QPointF(ax, ay), 2.6, 2.6)
         if "round_shades" in wear:                              # 糖果圆墨镜(支持染色)
             col = self._dye("face", "#FF922B")
             p.setPen(QPen(QColor("#FFF4E6"), 1.4))
@@ -2361,17 +2642,68 @@ class TypingPet(QWidget):
             p.drawEllipse(QPointF(0, -9), 7.5, 8.5)
             p.setBrush(QColor("#3E2723"))
             p.drawEllipse(QPointF(0, -10), 2.5, 2.5)
+        elif item == "fly_sword":                               # 灵气浮剑
+            col = self._dye("hand", "#20C997")
+            p.setPen(QPen(QColor("#C3FAE8"), 1.4))
+            p.setBrush(col)
+            p.drawPolygon([QPointF(0, -34), QPointF(4, -14), QPointF(0, -10), QPointF(-4, -14)])
+            p.setBrush(QColor("#FFD43B"))
+            p.drawRoundedRect(QRectF(-7, -12, 14, 3), 1.5, 1.5)
+            p.drawRect(QRectF(-1.5, -9, 3, 7))
+        elif item == "umbrella":                                # 透明雨伞
+            col = self._dye("hand", "#74C0FC")
+            p.setPen(QPen(QColor("#4A3B32"), 1.6))
+            p.drawLine(QPointF(0, -24), QPointF(0, -2))
+            p.setBrush(QColor(col.red(), col.green(), col.blue(), 170))
+            p.drawChord(QRectF(-14, -34, 28, 18), 0, 180 * 16)
+        elif item == "skateboard":                              # 霓虹滑板
+            col = self._dye("hand", "#FF922B")
+            p.setPen(out)
+            p.setBrush(col)
+            p.drawRoundedRect(QRectF(-5.5, -28, 11, 24), 5.5, 5.5)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor("#22B8CF"))
+            p.drawRect(QRectF(-4, -20, 8, 3))
+            p.drawRect(QRectF(-4, -13, 8, 3))
+        elif item == "honey_jar":                               # 蜂蜜罐
+            col = self._dye("hand", "#FCC419")
+            p.setPen(out)
+            p.setBrush(col)
+            p.drawRoundedRect(QRectF(-7.5, -18, 15, 15), 5, 5)
+            p.setBrush(QColor("#D9480F"))
+            p.drawRoundedRect(QRectF(-6.5, -21, 13, 4), 2, 2)
         p.restore()
 
     def _paint_fx_item(self, p: QPainter, fx: str, t: float, cx: float, cy: float) -> None:
         """特效类装扮:绕着宠物飘的小东西。"""
         p.save()
         rnd = random.Random(hash(fx) & 0xFFFF)
-        n = {"hearts": 4, "bubbles": 5, "snowfall": 8, "petals": 7, "fireflies": 5, "stardust": 9, "sparkle": 6}.get(fx, 5)
+        n = {"hearts": 4, "bubbles": 5, "snowfall": 8, "petals": 7, "fireflies": 5, "stardust": 9, "sparkle": 6,
+             "macaron_fx": 5, "pixel_stars": 7}.get(fx, 5)
         for i in range(n):
             seed_x = rnd.uniform(-48, 48)
             speed = rnd.uniform(0.18, 0.32)
             ph = (t * speed + i / n) % 1.0
+            if fx == "macaron_fx":
+                x = cx + seed_x * 0.85 + math.sin(t * 1.8 + i) * 5
+                y = self.EDGE - 8 - ph * 68
+                p.setOpacity(math.sin(math.pi * ph))
+                mcol = QColor(["#FF8FAB", "#A9E34B", "#FFD43B", "#B197FC", "#74C0FC"][i % 5])
+                p.setPen(QPen(QColor("#4A3B32"), 1.0))
+                p.setBrush(mcol)
+                p.drawRoundedRect(QRectF(x - 5, y - 3.5, 10, 7), 3.5, 3.5)
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor("#FFFFFF"))
+                p.drawRect(QRectF(x - 4.5, y - 0.8, 9, 1.6))
+                continue
+            if fx == "pixel_stars":
+                x = cx + seed_x + math.sin(t * 2.2 + i) * 4
+                y = cy - 60 + ph * 68
+                p.setOpacity(math.sin(math.pi * ph))
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor(["#FFD43B", "#63E6BE", "#B197FC", "#FF6B8A"][i % 4]))
+                p.drawRect(QRectF(x - 2.5, y - 2.5, 5, 5))
+                continue
             if fx in ("hearts", "bubbles"):                       # 往上冒
                 x = cx + seed_x * 0.8 + math.sin(t * 2 + i) * 4
                 y = self.EDGE - 4 - ph * 70
@@ -2487,6 +2819,12 @@ class TypingPet(QWidget):
             self.say("滑起来了~ 🕺", 2.0)
         elif tid == "rainbow":
             self.say("彩虹能量发射! 🌈", 2.0)
+        elif tid == "meditate":
+            self.say("心静自然星轨现~ ✨", 2.2)
+        elif tid == "blink":
+            self.say("瞬移残影! 抓不到我~ ⚡", 1.8)
+        elif tid == "coronation":
+            self.say("满级星雨庆典! 👑", 2.6)
         self.update()
         return True
 
@@ -2532,6 +2870,15 @@ class TypingPet(QWidget):
         elif tid == "rainbow":
             m["sy"] = 1 + 0.08 * ease
             m["dy"] = -4 * ease
+        elif tid == "meditate":
+            up = min(1.0, k / 0.2, (1 - k) / 0.2)
+            m["dy"] = -16 * up + math.sin(k * math.tau * 2) * 3 * up
+        elif tid == "blink":
+            m["dx"] = math.sin(k * math.tau * 3) * 18
+            m["sx"] = 0.72 + 0.28 * abs(math.cos(k * math.tau * 3))
+        elif tid == "coronation":
+            m["dy"] = -12 * ease
+            m["sy"] = 1 + 0.08 * ease
         elif tid in ("heart", "wave", "magic"):
             m["dy"] = -3 * ease
         return m
@@ -2602,8 +2949,8 @@ class TypingPet(QWidget):
                 x = cx + (i - 1) * 22 + math.sin(ph * 6 + i) * 6
                 p.drawText(QRectF(x - 10, top - 10 - ph * 34, 20, 20), "♪" if i % 2 else "♫",
                            QTextOption(Qt.AlignmentFlag.AlignCenter))
-        elif tid in ("fly", "magic", "spin"):             # 闪闪的星星
-            n = 8 if tid == "magic" else 5
+        elif tid in ("fly", "magic", "spin", "meditate", "blink", "coronation"):  # 闪闪的星星/星雨
+            n = 12 if tid == "coronation" else (8 if tid in ("magic", "meditate") else 5)
             for i in range(n):
                 a = i / n * math.tau + t * (3 if tid == "magic" else 1.5)
                 d = (26 + 10 * math.sin(t * 4 + i)) if tid == "magic" else 30

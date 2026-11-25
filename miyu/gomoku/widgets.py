@@ -25,29 +25,36 @@ def _accent() -> QColor:
 
 
 def paint_stone(p: QPainter, c: QPointF, r: float, black: bool, alpha: float = 1.0) -> None:
-    """一颗有光泽的棋子:黑子深色带高光,白子珍珠白。"""
+    """3.2 2.5D 玉石/黑曜石立体棋子:柔和接触投影 + 球面体积渐变 + 双层镜面高光 + 边缘反光。"""
     p.save()
     p.setOpacity(p.opacity() * alpha)
     p.setPen(Qt.PenStyle.NoPen)
-    shadow = QColor(0, 0, 0, 70)                             # 落在棋盘上的影子
-    p.setBrush(shadow)
-    p.drawEllipse(QPointF(c.x() + r * 0.10, c.y() + r * 0.16), r * 0.98, r * 0.98)
-    g = QRadialGradient(QPointF(c.x() - r * 0.35, c.y() - r * 0.40), r * 1.45)
+    # 柔和接触投影
+    p.setBrush(QColor(0, 0, 0, 88 if black else 62))
+    p.drawEllipse(QPointF(c.x() + r * 0.12, c.y() + r * 0.22), r * 1.02, r * 0.94)
+    g = QRadialGradient(QPointF(c.x() - r * 0.34, c.y() - r * 0.38), r * 1.48)
     if black:
-        g.setColorAt(0.0, QColor("#6B6B78"))
-        g.setColorAt(0.35, QColor("#26262E"))
-        g.setColorAt(1.0, QColor("#0B0B10"))
+        g.setColorAt(0.0, QColor("#74798C"))
+        g.setColorAt(0.32, QColor("#282A36"))
+        g.setColorAt(0.85, QColor("#111219"))
+        g.setColorAt(1.0, QColor("#252736"))
     else:
         g.setColorAt(0.0, QColor("#FFFFFF"))
-        g.setColorAt(0.55, QColor("#ECEAF4"))
-        g.setColorAt(1.0, QColor("#B9B4C8"))
+        g.setColorAt(0.50, QColor("#F3F1FA"))
+        g.setColorAt(0.88, QColor("#C6C0D6"))
+        g.setColorAt(1.0, QColor("#DDD8EC"))
     p.setBrush(QBrush(g))
+    p.setPen(QPen(QColor(255, 255, 255, 40 if black else 120), 0.9))
     p.drawEllipse(c, r, r)
-    hi = QRadialGradient(QPointF(c.x() - r * 0.38, c.y() - r * 0.45), r * 0.55)
-    hi.setColorAt(0.0, QColor(255, 255, 255, 120 if black else 200))
+    # 2.5D 镜面主高光
+    p.setPen(Qt.PenStyle.NoPen)
+    hi = QRadialGradient(QPointF(c.x() - r * 0.36, c.y() - r * 0.42), r * 0.56)
+    hi.setColorAt(0.0, QColor(255, 255, 255, 145 if black else 230))
     hi.setColorAt(1.0, QColor(255, 255, 255, 0))
     p.setBrush(QBrush(hi))
     p.drawEllipse(c, r, r)
+    p.setBrush(QColor(255, 255, 255, 160 if black else 235))
+    p.drawEllipse(QPointF(c.x() - r * 0.34, c.y() - r * 0.38), r * 0.16, r * 0.11)
     p.restore()
 
 
@@ -162,14 +169,20 @@ class BoardView(QWidget):
         dark = theme.is_dark()
         acc = _accent()
         board = QRectF(x0, y0, side, side)
-        g = QLinearGradient(board.topLeft(), board.bottomRight())     # 棋盘:和主题一致的半透明玻璃
+        # 3.2 2.5D 立体厚度底座 + 柔和台面投影
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(0, 0, 0, 75 if dark else 45))
+        p.drawRoundedRect(board.translated(0, 7), 18, 18)
+        p.setBrush(QColor(24, 16, 44, 240) if dark else QColor(196, 162, 118, 250))
+        p.drawRoundedRect(board.translated(0, 4), 18, 18)
+        g = QLinearGradient(board.topLeft(), board.bottomRight())     # 棋盘:2.5D 暖木/深空玉质台面
         if dark:
-            g.setColorAt(0.0, QColor(46, 32, 72, 225))
-            g.setColorAt(1.0, QColor(24, 16, 40, 235))
+            g.setColorAt(0.0, QColor(52, 38, 82, 235))
+            g.setColorAt(1.0, QColor(26, 18, 46, 245))
         else:
-            g.setColorAt(0.0, QColor(255, 248, 236, 240))
-            g.setColorAt(1.0, QColor(240, 226, 204, 245))
-        p.setPen(QPen(QColor(255, 255, 255, 40) if dark else QColor(120, 90, 50, 60), 1.2))
+            g.setColorAt(0.0, QColor(255, 247, 230, 250))
+            g.setColorAt(1.0, QColor(236, 214, 178, 252))
+        p.setPen(QPen(QColor(255, 255, 255, 58) if dark else QColor(255, 250, 240, 170), 1.5))
         p.setBrush(QBrush(g))
         p.drawRoundedRect(board, 18, 18)
         glow = QRadialGradient(board.center(), side * 0.7)

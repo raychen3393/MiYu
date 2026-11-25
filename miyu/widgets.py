@@ -35,14 +35,14 @@ from .ui import (
 class Msg:
     __slots__ = ("mid", "sender", "nick", "tag", "text", "mine", "time", "burn", "deadline", "status", "system",
                  "img", "mime", "w", "h", "thumb", "gone", "reply", "at", "file", "mention", "sticker",
-                 "delivered", "read", "receipt", "read_sent", "edited", "card", "skin", "anon", "fav", "reactions", "title",
-                 "level", "vid")
+                 "delivered", "read", "receipt", "read_sent", "edited", "card", "skin", "aura", "anon", "fav", "reactions",
+                 "title", "level", "vid")
 
     def __init__(self, text: str, *, mid: str | None = None, sender: str = "", nick: str = "", tag: str = "",
                  mine: bool = False, burn: int = 0, system: bool = False, img: bytes | None = None,
                  mime: str | None = None, w: int = 0, h: int = 0, reply: dict | None = None,
                  at: list | None = None, file: dict | None = None, sticker: bool = False, card: dict | None = None,
-                 skin: str | None = None, anon: bool = False, fav: dict | None = None) -> None:
+                 skin: str | None = None, aura: str | None = None, anon: bool = False, fav: dict | None = None) -> None:
         self.mid = mid or uuid.uuid4().hex
         self.sender = sender
         self.nick = nick
@@ -72,6 +72,7 @@ class Msg:
         self.edited = False        # 被编辑过
         self.card = card           # 卡片消息:投票 / 抽签 / 骰子 / 游戏 / 画板
         self.skin = skin           # 气泡皮肤
+        self.aura = aura or ""     # 3.2 动态边缘粒子气泡特效(不遮挡文字)
         self.anon = anon           # 匿名纸条
         self.fav = fav             # 收藏来源 {"from","where","time","conv","mid"}
         self.reactions: dict = {}  # 表情回应:表情 → [回应的人的 id]
@@ -124,6 +125,7 @@ class ChatInput(QPlainTextEdit):
         self._hint = ""
         self._composing = False          # 输入法正在拼写(拼音还没上屏)
         self._last_pre = ""              # 上一次的拼音,用来判断这次是不是真的按了键
+        self.last_key_repeat = False     # 上一次按键是否为长按自动连发(30 级以上拦截刷经验用)
         self.textChanged.connect(self._fit)
         self._fit()
 
@@ -133,6 +135,7 @@ class ChatInput(QPlainTextEdit):
         self.setPlaceholderText("" if self._composing else text)
 
     def keyPressEvent(self, e) -> None:
+        self.last_key_repeat = bool(e.isAutoRepeat())
         if e.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and not (e.modifiers() & Qt.KeyboardModifier.ShiftModifier):
             if not e.isAutoRepeat():
                 self.keystroke.emit("enter")
@@ -151,6 +154,7 @@ class ChatInput(QPlainTextEdit):
             self.at_typed.emit()
 
     def inputMethodEvent(self, e) -> None:
+        self.last_key_repeat = False
         composing = bool(e.preeditString())
         if composing != self._composing:
             self._composing = composing
@@ -788,6 +792,137 @@ class CodeBlockCard(QFrame):
             pass
 
 
+def paint_bubble_aura(p: QPainter, r: QRectF, aura: str, t: float) -> None:
+    """3.2 聊天气泡动态边缘粒子特效(12 款):完全画在气泡外沿,炫酷真实且绝不遮挡文字。"""
+    if not aura or r.width() < 12 or r.height() < 12:
+        return
+    p.save()
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    rad = float(theme.BUBBLE_R) + 1.5
+    pulse = 0.5 + 0.5 * math.sin(t * 4.0)
+
+    def _perimeter_pt(frac: float) -> tuple[float, float]:
+        frac = frac % 1.0
+        w, h = r.width(), r.height()
+        per = 2.0 * (w + h)
+        d = frac * per
+        if d < w:
+            return r.left() + d, r.top()
+        d -= w
+        if d < h:
+            return r.right(), r.top() + d
+        d -= h
+        if d < w:
+            return r.right() - d, r.bottom()
+        d -= w
+        return r.left(), r.bottom() - d
+
+    if aura in ("flame", "dragon", "eternal"):
+        c_outer = QColor("#FF4D00") if aura == "flame" else (QColor("#AE3EC9") if aura == "dragon" else QColor("#FAB005"))
+        c_inner = QColor("#FFD43B") if aura != "dragon" else QColor("#FF6B6B")
+        # 多层暖光外晕
+        for idx, (grow, alpha, width) in enumerate(((2.6, 85, 5.2), (1.0, 175, 2.4))):
+            col = QColor(c_outer if idx == 0 else c_inner)
+            col.setAlpha(int(alpha * (0.78 + 0.22 * pulse)))
+            p.setPen(QPen(col, width))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRoundedRect(r.adjusted(-grow, -grow, grow, grow), rad + grow * 0.6, rad + grow * 0.6)
+        # 顶部与两侧动态摇曳火舌 + 上升飞溅火星
+        p.setPen(Qt.PenStyle.NoPen)
+        count = max(8, min(18, int(r.width() / 22)))
+        for i in range(count):
+            ph = (t * (1.35 + (i % 3) * 0.25) + i * 0.37) % 1.0
+            fx = r.left() + 10 + (r.width() - 20) * ((i + 0.5) / count) + math.sin(t * 7 + i * 2.1) * 3.0
+            fy = r.top() - 1.0 - ph * 11.0
+            sc = (1.0 - ph)
+            fc = QColor(c_outer if ph > 0.45 else c_inner)
+            fc.setAlphaF(max(0.0, sc * 0.92))
+            p.setBrush(fc)
+            p.drawEllipse(QPointF(fx, fy), 2.4 * sc + 0.8, 3.8 * sc + 0.8)
+            if i % 2 == 0:
+                sx = fx + math.sin(t * 9 + i * 3.3) * 6.0
+                sy = r.top() - 3.0 - ph * 16.0
+                sp = QColor("#FFF3BF")
+                sp.setAlphaF(max(0.0, (1.0 - ph) * 0.95))
+                p.setBrush(sp)
+                p.drawEllipse(QPointF(sx, sy), 1.3, 1.3)
+
+    elif aura == "lightning":
+        glow = QColor(51, 154, 240, int(90 + 60 * pulse))
+        p.setPen(QPen(glow, 4.0))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRoundedRect(r.adjusted(-1.5, -1.5, 1.5, 1.5), rad, rad)
+        # 沿边框跳跃的锯齿电弧
+        for k in range(3):
+            base = (t * 0.55 + k * 0.33) % 1.0
+            pts = []
+            for j in range(6):
+                px, py = _perimeter_pt(base + j * 0.028)
+                jit = math.sin(t * 42 + j * 5.7 + k * 3.1) * 3.8
+                pts.append(QPointF(px + jit, py - jit * 0.7))
+            p.setPen(QPen(QColor("#74C0FC"), 2.4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            for j in range(len(pts) - 1):
+                p.drawLine(pts[j], pts[j + 1])
+            p.setPen(QPen(QColor("#FFFFFF"), 1.1))
+            for j in range(len(pts) - 1):
+                p.drawLine(pts[j], pts[j + 1])
+
+    elif aura in ("neon", "prism", "aurora"):
+        for k in range(2):
+            c = (QColor.fromHsv(int((t * 90 + k * 140) % 360), 210, 255) if aura == "prism" else
+                 QColor("#22B8CF" if k == 0 else "#CC5DE8") if aura == "neon" else
+                 QColor("#51CF66" if k == 0 else "#20C997"))
+            c.setAlpha(int((115 if k == 0 else 185) * (0.75 + 0.25 * pulse)))
+            p.setPen(QPen(c, 4.2 if k == 0 else 2.0))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRoundedRect(r.adjusted(-2.0 + k, -2.0 + k, 2.0 - k, 2.0 - k), rad + 1, rad + 1)
+        p.setPen(Qt.PenStyle.NoPen)
+        for i in range(6):
+            px, py = _perimeter_pt((t * 0.22 + i / 6.0) % 1.0)
+            sc = QColor.fromHsv(int((t * 120 + i * 60) % 360), 180, 255) if aura == "prism" else QColor("#FFFFFF")
+            sc.setAlpha(210)
+            p.setBrush(sc)
+            p.drawEllipse(QPointF(px, py), 2.1, 2.1)
+
+    else:
+        # bubble / sakura / frost / heart / galaxy
+        cols = {"bubble": "#74C0FC", "sakura": "#FF8FAB", "frost": "#A5D8FF", "heart": "#FF6B8A", "galaxy": "#9775FA"}
+        base_c = QColor(cols.get(aura, "#74C0FC"))
+        g_c = QColor(base_c)
+        g_c.setAlpha(int(95 + 65 * pulse))
+        p.setPen(QPen(g_c, 2.4))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRoundedRect(r.adjusted(-1.5, -1.5, 1.5, 1.5), rad, rad)
+        for i in range(7):
+            ph = (t * 0.26 + i / 7.0) % 1.0
+            px, py = _perimeter_pt(ph)
+            px += math.sin(t * 2.5 + i * 1.9) * 3.2
+            py += math.cos(t * 2.2 + i * 1.7) * 3.2 - (ph * 4.0 if aura in ("bubble", "heart") else 0.0)
+            if aura == "bubble":
+                p.setPen(QPen(QColor(165, 216, 255, 220), 1.0))
+                p.setBrush(QColor(255, 255, 255, 70))
+                p.drawEllipse(QPointF(px, py), 3.0, 3.0)
+            elif aura == "sakura":
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor(255, 182, 206, 220))
+                p.drawEllipse(QPointF(px, py), 3.4, 2.0)
+            elif aura == "frost":
+                p.setPen(QPen(QColor(220, 244, 255, 230), 1.1))
+                p.drawLine(QPointF(px - 2.8, py), QPointF(px + 2.8, py))
+                p.drawLine(QPointF(px, py - 2.8), QPointF(px, py + 2.8))
+            elif aura == "heart":
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor(255, 107, 138, 220))
+                p.drawEllipse(QPointF(px - 1.5, py), 2.0, 2.0)
+                p.drawEllipse(QPointF(px + 1.5, py), 2.0, 2.0)
+                p.drawPolygon([QPointF(px - 3.3, py + 0.6), QPointF(px + 3.3, py + 0.6), QPointF(px, py + 4.2)])
+            else:  # galaxy
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor("#FFF3BF" if i % 2 == 0 else "#B197FC"))
+                p.drawEllipse(QPointF(px, py), 2.1, 2.1)
+    p.restore()
+
+
 class Bubble(QWidget):
     open_image = Signal(object)
     menu_requested = Signal(object, object)       # (消息, 全局坐标)
@@ -828,8 +963,14 @@ class Bubble(QWidget):
         align = Qt.AlignmentFlag.AlignRight if mine else Qt.AlignmentFlag.AlignLeft
         row = QHBoxLayout(self)
         self._row = row
-        row.setContentsMargins(18, self.top_gap(grp, show_head), 18, 1)
+        pad_v = 7 if (msg.aura and not msg.gone) else 0
+        row.setContentsMargins(18, self.top_gap(grp, show_head) + pad_v, 18, 1 + pad_v)
         row.setSpacing(8)
+        self._aura_timer: QTimer | None = None
+        if msg.aura and not msg.gone:
+            self._aura_timer = QTimer(self)
+            self._aura_timer.setInterval(36)
+            self._aura_timer.timeout.connect(self.update)
         self.setToolTip(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(msg.time)))
         self.sel_btn = QPushButton("")
         self.sel_btn.setObjectName("selBox")
@@ -1002,6 +1143,28 @@ class Bubble(QWidget):
             t.setToolTip("佩戴的称号(成就墙里拿到的)")
             lay.addWidget(t)
         return w
+
+    def showEvent(self, e) -> None:
+        super().showEvent(e)
+        if getattr(self, "_aura_timer", None) is not None and self.msg.aura and not self.msg.gone:
+            self._aura_timer.start()
+
+    def hideEvent(self, e) -> None:
+        super().hideEvent(e)
+        if getattr(self, "_aura_timer", None) is not None:
+            self._aura_timer.stop()
+
+    def paintEvent(self, e) -> None:
+        super().paintEvent(e)
+        aura = getattr(self.msg, "aura", "")
+        if aura and not self.msg.system and not self.msg.gone:
+            w = self.content_widget()
+            if w is not None and w.isVisible():
+                tl = w.mapTo(self, QPoint(0, 0))
+                r = QRectF(tl.x(), tl.y(), w.width(), w.height())
+                p = QPainter(self)
+                paint_bubble_aura(p, r, aura, time.monotonic())
+                p.end()
 
     def enterEvent(self, e) -> None:
         super().enterEvent(e)
@@ -1479,11 +1642,12 @@ class ChatPanel(QWidget):
 
 
 class HoverBar(QFrame):
-    """鼠标停在一条消息上时,旁边浮出的一排快捷按钮:回复 / 复制 / 收藏 / 删除 / 更多。"""
+    """3.2 升级悬停快捷浮条:👍 ❤️ 😂 一键表情回应 + 回复 / 复制 / 收藏 / 删除 / 更多。"""
     act = Signal(str)
     entered = Signal()
     left = Signal()
     BTN = 26
+    QUICK_EMOJIS = (("react:👍", "👍", "点赞 👍"), ("react:❤️", "❤️", "比心 ❤️"), ("react:😂", "😂", "哈哈 😂"))
     ACTIONS = (("reply", "reply", "回复"), ("copy", "copy", "复制"), ("fav", "star", "收藏"),
                ("delete", "trash", "删除(只删本机)"), ("more", "more", "更多…"))
 
@@ -1492,9 +1656,21 @@ class HoverBar(QFrame):
         self.setObjectName("hoverBar")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(3, 2, 3, 2)
+        lay.setContentsMargins(4, 2, 4, 2)
         lay.setSpacing(1)
         self.btns: dict[str, QToolButton] = {}
+        ef = emoji_font(13)
+        for key, emo, tip in self.QUICK_EMOJIS:
+            b = QToolButton()
+            b.setObjectName("hoverBtn")
+            b.setText(emo)
+            b.setFont(ef)
+            b.setFixedSize(self.BTN, self.BTN)
+            b.setToolTip(tip)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.clicked.connect(lambda _=False, k=key: self.act.emit(k))
+            lay.addWidget(b)
+            self.btns[key] = b
         for key, _ic, tip in self.ACTIONS:
             b = QToolButton()
             b.setObjectName("hoverBtn")

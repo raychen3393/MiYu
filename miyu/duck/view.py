@@ -11,6 +11,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QRadialGradient, QTextOption
 from PySide6.QtWidgets import QWidget
 
+from ..pet3d import clay_brush, contour_pen
 from . import world as Wd
 from .rules import DUCK
 
@@ -23,7 +24,7 @@ def _now() -> float:
 
 def draw_bird(p: QPainter, x: float, y: float, color: str, face: int = 1, t: float = 0.0, walking: bool = False,
               ghost: bool = False, scale: float = 1.0) -> None:
-    """一只圆滚滚的小鹅:身子、白肚皮、橙色扁嘴、眼睛、小翅膀、两只脚。幽灵半透明、飘着、头顶光环。"""
+    """3.2 2.5D 黏土盲盒小鹅:球面高光、边缘补光、柔和接触投影、圆润呆萌质感。"""
     p.save()
     bob = math.sin(t * 12) * 2.2 if walking else math.sin(t * 2.4) * 0.8
     if ghost:
@@ -31,45 +32,47 @@ def draw_bird(p: QPainter, x: float, y: float, color: str, face: int = 1, t: flo
         p.setOpacity(p.opacity() * 0.55)
     p.translate(x, y + bob)
     p.scale(scale * face, scale)
-    out = QPen(QColor(OUTLINE), 2)
-    out.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
     body = QColor(color)
-    if not ghost:                                     # 影子 + 脚
+    out = contour_pen(body, 1.8)
+    if not ghost:                                     # 接触投影 + 脚
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(0, 0, 0, 50))
-        p.drawEllipse(QPointF(0, 19 - bob), 15, 4.5)
-        p.setPen(QPen(QColor("#E8590C"), 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        p.setBrush(QColor(0, 0, 0, 62))
+        p.drawEllipse(QPointF(0, 19.5 - bob), 16.5, 5.2)
+        p.setPen(QPen(QColor("#E8590C"), 3.2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
         step = math.sin(t * 12) * 4 if walking else 0
         p.drawLine(QPointF(-5, 12), QPointF(-6 + step, 18 - bob))
         p.drawLine(QPointF(5, 12), QPointF(6 - step, 18 - bob))
     p.setPen(out)
-    p.setBrush(body)
-    p.drawEllipse(QPointF(0, 2), 17, 15)                  # 身子
-    p.drawEllipse(QPointF(5, -12), 10, 10)                # 脑袋
+    p.setBrush(clay_brush(0, 2, 18, 16, body))
+    p.drawEllipse(QPointF(0, 2), 17, 15)                  # 2.5D 黏土身子
+    p.setBrush(clay_brush(5, -12, 11, 11, body))
+    p.drawEllipse(QPointF(5, -12), 10.2, 10.2)            # 2.5D 黏土脑袋
     p.setPen(Qt.PenStyle.NoPen)
-    p.setBrush(QColor(255, 255, 255, 170))
+    p.setBrush(QColor(255, 255, 255, 185))
     p.drawEllipse(QPointF(-1, 6), 10, 7.5)                # 肚皮
+    p.setBrush(QColor(255, 255, 255, 95))
+    p.drawEllipse(QPointF(2, -16.5), 4.2, 2.2)            # 头顶黏土反光点
     p.setPen(out)
     wing = QPainterPath(QPointF(-12, -2))
     wing.quadTo(-20, 6, -10, 11)
     wing.quadTo(-6, 4, -12, -2)
-    p.setBrush(body.darker(112))
+    p.setBrush(clay_brush(-12, 4, 8, 8, body.darker(110)))
     p.drawPath(wing)
     beak = QPainterPath(QPointF(13, -14))
     beak.quadTo(22, -12, 21, -9)
     beak.quadTo(16, -7, 12, -9)
     beak.closeSubpath()
-    p.setBrush(QColor("#FF922B"))
+    p.setBrush(clay_brush(16, -11, 6, 4, QColor("#FF922B")))
     p.drawPath(beak)
     p.setPen(Qt.PenStyle.NoPen)
     p.setBrush(QColor(OUTLINE))
-    p.drawEllipse(QPointF(8, -14), 1.9, 2.3)
-    p.setBrush(QColor(255, 255, 255, 220))
-    p.drawEllipse(QPointF(8.6, -14.8), 0.7, 0.7)
-    p.setBrush(QColor(255, 140, 160, 120))
-    p.drawEllipse(QPointF(3, -8), 3, 1.8)
+    p.drawEllipse(QPointF(8, -14), 2.0, 2.4)
+    p.setBrush(QColor(255, 255, 255, 235))
+    p.drawEllipse(QPointF(8.7, -14.9), 0.85, 0.85)
+    p.setBrush(QColor(255, 130, 155, 145))
+    p.drawEllipse(QPointF(3, -8), 3.2, 2.0)
     if ghost:
-        p.setPen(QPen(QColor("#FFE066"), 2))
+        p.setPen(QPen(QColor("#FFE066"), 2.2))
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawEllipse(QPointF(5, -27), 8, 2.5)
     p.restore()

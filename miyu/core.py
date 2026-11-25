@@ -223,6 +223,8 @@ def anon_placeholder(fwd: dict) -> str:
         k = "gif"
     return f"{ANON_PLACEHOLDER.get(k, '[附件]')}(对方版本太旧看不到,升级到 2.1 以上就行)"
 SKINS = {"jelly", "cloud", "candy", "mint", "galaxy", "gold", "rainbow"}
+AURAS = {"bubble", "sakura", "frost", "heart", "flame", "lightning", "galaxy", "dragon", "eternal", "neon", "aurora",
+         "prism"}
 
 
 def _json_size(obj) -> int:
@@ -253,6 +255,10 @@ def clean_level(v) -> int:
 
 def clean_skin(v) -> str | None:
     return v if isinstance(v, str) and v in SKINS else None
+
+
+def clean_aura(v) -> str | None:
+    return v if isinstance(v, str) and v in AURAS else None
 
 
 def error_detail(e: BaseException) -> str:
@@ -863,13 +869,15 @@ class Core:
         return extra
 
     def send_text(self, scope: str, target: str | None, text: str, burn: int = 0, reply=None, at=None,
-                  skin: str | None = None) -> str | None:
+                  skin: str | None = None, aura: str | None = None) -> str | None:
         text = str(text)[:MAX_TEXT]
         if not text.strip():
             return None
         extra = {"text": text}
         if clean_skin(skin):
             extra["skin"] = skin
+        if clean_aura(aura):
+            extra["aura"] = aura
         return self._queue_msg(scope, target, self._extras(extra, reply, at), burn)
 
     def send_card(self, scope: str, target: str | None, card: dict, text: str = "") -> str | None:
@@ -1452,7 +1460,8 @@ class Core:
             **base, "text": text[:MAX_TEXT], "burn": burn, "time": time.time(),
             "img": image, "mime": mime, "w": w, "h": h, "file": file, "sticker": bool(image and fields.get("stk")),
             "reply": clean_reply(fields.get("reply")), "at": clean_at(fields.get("at")),
-            "card": card, "skin": clean_skin(fields.get("skin")), "title": clean_title(fields.get("ttl")),
+            "card": card, "skin": clean_skin(fields.get("skin")), "aura": clean_aura(fields.get("aura")),
+            "title": clean_title(fields.get("ttl")),
             "level": clean_level(fields.get("lv")),
         })
 

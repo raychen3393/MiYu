@@ -1015,7 +1015,7 @@ class PetGrowthTests(unittest.TestCase):
         from miyu import fun
         g = fun.PetGrowth({"xp": fun.xp_for_level(12)})
         self.assertEqual([t[1] for t in g.tricks()], ["stretch", "spin"])
-        self.assertEqual(len(fun.PetGrowth({"xp": fun.xp_for_level(50)}).tricks()), len(fun.TRICKS))
+        self.assertEqual(len(fun.PetGrowth({"xp": fun.xp_for_level(fun.PET_MAX_LEVEL)}).tricks()), len(fun.TRICKS))
         self.assertTrue(fun.PetGrowth({"xp": fun.xp_for_level(40)}).mythic)
         self.assertFalse(fun.PetGrowth({"xp": fun.xp_for_level(39)}).mythic)
         for need, tid, name, dur in fun.TRICKS:
@@ -2640,7 +2640,7 @@ class GroupPetModelTests(unittest.TestCase):
         self.assertEqual(petcare.next_form(25), (30, "传说期"))
         self.assertEqual(petcare.next_form(30), (40, "神话期"))
         self.assertEqual(petcare.form_of(40)[1], "神话期")
-        self.assertIsNone(petcare.next_form(40))
+        self.assertIsNone(petcare.next_form(fun.PET_MAX_LEVEL))
         big = fun.PetGrowth({"xp": fun.xp_for_level(30)})
         self.assertTrue(big.legendary)
         for aid, *_ in fun.ACCESSORIES:                     # 新装扮都有部位、都能戴

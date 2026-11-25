@@ -319,6 +319,13 @@ class LookMixin:
             self.ambient.play(kind, self.ambient_volume)
         else:
             self.ambient.stop()
+        if hasattr(self, "pet"):
+            self.pet.ambient_fx = kind or ""
+            self.pet.update()
+        dw = getattr(self, "desktop_win", None)
+        if dw is not None:
+            dw.pet.ambient_fx = kind or ""
+            dw.update()
 
     def set_ambient_volume(self, v: float) -> None:
         self.ambient_volume = v

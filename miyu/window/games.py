@@ -46,6 +46,123 @@ def clean_stroke(d: dict) -> dict | None:
     return {"c": c, "w": float(w), "pts": out}
 
 
+DEFAULT_QUICK_PHRASES = [
+    "收到 👌", "稍等，马上回~", "开会中，晚点聊", "没问题！",
+    "摸鱼中勿扰 🐟", "太强了 👍", "辛苦啦 ☕", "下班走起！",
+]
+
+
+class QuickPhraseDialog(Dialog):
+    """3.2 快捷常用语面板:一键发送常用短语,支持自由增删。"""
+
+    def __init__(self, parent, phrases: list[str], on_send) -> None:
+        super().__init__(parent, "快捷常用语")
+        self.phrases = phrases
+        self.on_send = on_send
+        self.setFixedWidth(420)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(24, 20, 24, 18)
+        lay.setSpacing(8)
+        lay.addWidget(label("⚡ 快捷常用语（点击即发送）", "dialogTitle"))
+        self.list_box = QWidget(self)
+        self.list_lay = QVBoxLayout(self.list_box)
+        self.list_lay.setContentsMargins(0, 0, 4, 0)
+        self.list_lay.setSpacing(6)
+        area = QScrollArea(self)
+        area.setWidgetResizable(True)
+        area.setFrameShape(QFrame.Shape.NoFrame)
+        area.setWidget(self.list_box)
+        area.setFixedHeight(260)
+        lay.addWidget(area)
+        add_row = QHBoxLayout()
+        self.new_edit = QLineEdit(self)
+        self.new_edit.setPlaceholderText("添加新常用语，按回车保存…")
+        self.new_edit.setMaxLength(80)
+        self.new_edit.returnPressed.connect(self._add)
+        add_row.addWidget(self.new_edit, 1)
+        add_row.addWidget(button("添加", "primary", self._add, 70))
+        lay.addLayout(add_row)
+        lay.addWidget(button("关闭", "link", self.accept))
+        self._rebuild()
+
+    def _rebuild(self) -> None:
+        while self.list_lay.count():
+            it = self.list_lay.takeAt(0)
+            if it.widget():
+                it.widget().deleteLater()
+        for idx, text in enumerate(self.phrases):
+            row = QHBoxLayout()
+            row.setSpacing(6)
+            w = QWidget(self.list_box)
+            w.setLayout(row)
+            b = button(text, "", lambda _=False, t=text: self._pick(t))
+            b.setMinimumHeight(34)
+            row.addWidget(b, 1)
+            del_b = button("×", "link", lambda _=False, i=idx: self._del(i), 28)
+            row.addWidget(del_b)
+            self.list_lay.addWidget(w)
+        self.list_lay.addStretch(1)
+
+    def _pick(self, text: str) -> None:
+        self.accept()
+        if callable(self.on_send):
+            self.on_send(text)
+
+    def _add(self) -> None:
+        t = self.new_edit.text().strip()[:80]
+        if t and t not in self.phrases and len(self.phrases) < 30:
+            self.phrases.append(t)
+            self.new_edit.clear()
+            self._rebuild()
+
+    def _del(self, idx: int) -> None:
+        if 0 <= idx < len(self.phrases):
+            self.phrases.pop(idx)
+            self._rebuild()
+
+
+class ReminderDialog(Dialog):
+    """3.2 定时提醒 / 倒计时小纸条。"""
+
+    def __init__(self, parent) -> None:
+        super().__init__(parent, "定时提醒小纸条")
+        self.setFixedWidth(390)
+        self.minutes = 15
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(24, 20, 24, 18)
+        lay.setSpacing(10)
+        lay.addWidget(label("⏰ 定时提醒 / 倒计时小纸条", "dialogTitle"))
+        lay.addWidget(label("快捷选择倒计时时长:", "hint"))
+        prow = QHBoxLayout()
+        prow.setSpacing(6)
+        self._pbtns: list[QPushButton] = []
+        for m in (1, 5, 15, 30, 60):
+            b = QPushButton(f"{m} 分钟", self)
+            b.setObjectName("tab")
+            b.setCheckable(True)
+            b.setChecked(m == 15)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.clicked.connect(lambda _=False, v=m: self._set_m(v))
+            prow.addWidget(b)
+            self._pbtns.append(b)
+        lay.addLayout(prow)
+        self.note_edit = QLineEdit(self)
+        self.note_edit.setPlaceholderText("提醒内容，例如：喝水休息一下 ☕ / 开会提醒")
+        self.note_edit.setText("喝水休息一下 ☕")
+        self.note_edit.setMaxLength(80)
+        lay.addWidget(self.note_edit)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(button("取消", "", self.reject, 80))
+        row.addWidget(button("开始倒计时", "primary", self.accept, 110))
+        lay.addLayout(row)
+
+    def _set_m(self, m: int) -> None:
+        self.minutes = m
+        for b, v in zip(self._pbtns, (1, 5, 15, 30, 60)):
+            b.setChecked(v == m)
+
+
 class BentoToolsPopup(QFrame):
     """Bento 磁贴工具抽屉:半透明毛玻璃分类网格,取代传统长菜单。"""
 
@@ -533,15 +650,18 @@ class GamesMixin:
             fun_tiles.append(("✊", "加密猜拳", "承诺防作弊出拳", lambda: self.start_game("rps")))
         fun_tiles.append(("🎯", "掷骰子", "1~6 点手气比拼", self.roll_dice))
         fun_tiles.append(("🎨", "一起画", "多人实时同步白板", self.start_board))
+        fun_tiles.append(("⚡", "快捷常用语", "摸鱼一键回复短语", self.open_quick_phrases))
+        fun_tiles.append(("⏰", "定时提醒", "喝水/开会倒计时提醒", self.open_reminder_dialog))
 
         party_tiles: list[tuple[str, str, str, object]] = [
-            ("🏆", "五子棋大厅", "天梯积分 · 人机练习", lambda: self.open_gomoku()),
-            ("🦆", "谁是坏鸭", "4~10 人跑图推理", lambda: self.open_duck()),
+            ("🏆", "五子棋大厅", "2.5D 立体棋盘对弈", lambda: self.open_gomoku()),
+            ("🦆", "谁是坏鸭", "2.5D 潮玩跑图推理", lambda: self.open_duck()),
             ("🕵", "谁是卧底", "一句话描述找卧底", lambda: self.open_spy()),
         ]
         if conv.kind in ("lobby", "room"):
             party_tiles.append(("🐾", "宠物等级榜", "看看谁家萌宠最强", lambda c=conv: self.open_pet_rank(c)))
-        party_tiles.append(("🎮", "接零食大作战", "25秒接零食赢经验", self.show_snack_game))
+        party_tiles.append(("🎮", "接零食大作战", "2.5D 道具与狂热双倍", self.show_snack_game))
+        party_tiles.append(("☁️", "云端跳跳乐", "2.5D 萌宠蹦云冲高分", self.show_cloud_game))
         party_tiles.append(("🎁", "签到与通行证", "每日领限定装扮动作", self.show_pet_pass))
 
         social_tiles: list[tuple[str, str, str, object]] = []
@@ -582,6 +702,41 @@ class GamesMixin:
         y = max(8, pos.y() - pop.sizeHint().height() - 10)
         pop.move(x, y)
         pop.show()
+
+    def open_quick_phrases(self) -> None:
+        phrases = getattr(self, "quick_phrases", None)
+        if not isinstance(phrases, list):
+            phrases = list(DEFAULT_QUICK_PHRASES)
+            self.quick_phrases = phrases
+
+        def _send(text: str) -> None:
+            if self.input.isEnabled():
+                self.input.setPlainText(text)
+                self.send_current()
+
+        QuickPhraseDialog(self, phrases, _send).exec()
+
+    def open_reminder_dialog(self) -> None:
+        dlg = ReminderDialog(self)
+        if not dlg.exec():
+            return
+        mins = dlg.minutes
+        note = dlg.note_edit.text().strip() or "时间到啦!"
+        conv = self.current
+        if conv is not None:
+            self._system(conv, f"⏰ 已设置 {mins} 分钟提醒：「{note}」")
+        if hasattr(self, "pet"):
+            self.pet.say(f"记好啦! {mins} 分钟后提醒你~", 2.5)
+
+        def _fire() -> None:
+            if hasattr(self, "pet"):
+                self.pet.celebrate()
+                self.pet.say(f"⏰ {note}", 5.0)
+            if self.current is not None:
+                self._system(self.current, f"⏰ 定时提醒到点啦：{note}")
+            info(self, "⏰ 定时提醒", note)
+
+        QTimer.singleShot(mins * 60 * 1000, _fire)
 
     # ---------------------------------------------------------------- 投票 / 抽签 / 骰子
     def start_poll(self) -> None:

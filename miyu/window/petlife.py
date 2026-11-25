@@ -17,19 +17,21 @@ import time
 from PySide6.QtCore import QPoint, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QGuiApplication, QPainter
 from PySide6.QtWidgets import (
-    QFrame, QGridLayout, QHBoxLayout, QProgressBar, QPushButton, QStackedWidget, QVBoxLayout, QWidget,
+    QFrame, QGridLayout, QHBoxLayout, QLineEdit, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea,
+    QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from ..dialogs import Dialog, TextDialog, info, prompt
 from ..fun import (
-    ACC_BY_ID, ACCESSORIES, DYE_PRESETS, OUTFITS, SLOTS, SPECIAL_TRICKS, SPECIES, TRICKS, PetGrowth, TypingPet,
+    ACC_BY_ID, ACCESSORIES, ANTI_HOLD_LEVEL, DYE_PRESETS, OUTFITS, SLOTS, SPECIAL_TRICKS, SPECIES, TRICKS, PetGrowth,
+    TypingPet,
 )
 from ..pet3d import COATS, EYE_STYLES, ROOMS
 from ..petcare import (
     EXPRESSIONS, FOOD_BY_ID, FOODS, FORMS, GP_DAILY_FEEDS, GP_MSG_XP, GP_SPECIES, TOY_BY_ID, TOYS, GroupPet,
     form_of, next_form,
 )
-from ..petpass import PassDialog, SnackCatchDialog, can_checkin
+from ..petpass import CloudJumpDialog, PassDialog, SnackCatchDialog, can_checkin
 from ..theme import T
 from ..ui import button, label, make_menu, popup
 from ..widgets import Conv
@@ -88,6 +90,7 @@ class DesktopPet(QWidget):
         self._pause_until = 0.0
         self._sprint_until = 0.0
         self._prev_down: set[int] = set()
+        self._last_hold_t = 0.0
         self._roam_timer = QTimer(self)
         self._roam_timer.setInterval(36)
         self._roam_timer.timeout.connect(self._roam_step)
@@ -132,7 +135,7 @@ class DesktopPet(QWidget):
             return 0, 0, 1280, 720
 
     def _roam_step(self) -> None:
-        if not self.isVisible() or self._press is not None:
+        if not self.isVisible() or self._press is not None or getattr(self.win, "desktop_locked", False):
             return
         mode = getattr(self.win, "desktop_mode", "roam")
         if mode == "fixed":
@@ -175,24 +178,30 @@ class DesktopPet(QWidget):
         self.move(int(nx), ny)
 
     def _poll_global_keys(self) -> None:
-        """隐私友好:仅检测敲击节拍(不记录任何按键字符),让最小化后的桌宠也能跟着主人打字拍爪!"""
+        """隐私友好:仅检测敲击节拍(不记录任何按键字符),30 级及以上拦截长按连发刷经验。"""
         if not self.isVisible() or not getattr(self.win, "desktop_global_keys", True):
             return
         try:
             import ctypes
             u32 = ctypes.windll.user32
             hit_kind = None
+            is_repeat = False
             down_now: set[int] = set()
             for vk in _GLOBAL_VKS:
                 if u32.GetAsyncKeyState(vk) & 0x8000:
                     down_now.add(vk)
                     if vk not in self._prev_down:
                         hit_kind = "delete" if vk == 0x08 else ("enter" if vk == 0x0D else ("space" if vk == 0x20 else "char"))
+            now = time.monotonic()
+            if hit_kind is None and down_now and self.win.pet_growth.level < ANTI_HOLD_LEVEL and now - self._last_hold_t >= 0.12:
+                self._last_hold_t = now
+                hit_kind = "char"
+                is_repeat = True
             self._prev_down = down_now
             if hit_kind is not None:
                 self.pet.tap(hit_kind)
                 if hasattr(self.win, "on_desktop_keybeat"):
-                    self.win.on_desktop_keybeat(hit_kind)
+                    self.win.on_desktop_keybeat(hit_kind, is_repeat=is_repeat)
         except Exception:
             pass
 
@@ -217,7 +226,7 @@ class DesktopPet(QWidget):
             self._moved = False
 
     def mouseMoveEvent(self, e) -> None:
-        if self._press is not None:
+        if self._press is not None and not getattr(self.win, "desktop_locked", False):
             pos = e.globalPosition().toPoint() - self._press
             if (pos - self.pos()).manhattanLength() > 3:
                 self._moved = True
@@ -246,10 +255,16 @@ class DesktopPet(QWidget):
         gk.setCheckable(True)
         gk.setChecked(bool(getattr(self.win, "desktop_global_keys", True)))
         gk.triggered.connect(self.win.set_desktop_global_keys)
+        lk = m.addAction("🔒  锁定位置(防误触拖动)")
+        lk.setCheckable(True)
+        lk.setChecked(bool(getattr(self.win, "desktop_locked", False)))
+        lk.triggered.connect(self.win.set_desktop_locked)
         m.addSeparator()
         m.addAction("🎁  每日签到与通行证…", lambda: (self.win.restore_from_desktop(), self.win.show_pet_pass()))
         m.addAction("🎮  接零食小游戏…", lambda: (self.win.restore_from_desktop(), self.win.show_snack_game()))
+        m.addAction("☁️  云端跳跳乐…", lambda: (self.win.restore_from_desktop(), self.win.show_cloud_game()))
         m.addAction("👗  2.5D 潮玩衣橱…", lambda: (self.win.restore_from_desktop(), self.win.show_wardrobe()))
+        m.addAction("💬  自定义台词与下班倒计时…", lambda: (self.win.restore_from_desktop(), self.win.show_pet_custom()))
         m.addAction("回到密语", self.win.restore_from_desktop)
         m.addSeparator()
         m.addAction("关闭桌面陪伴", lambda: self.win.set_desktop_pet(False))
@@ -356,14 +371,38 @@ class WardrobeDialog(Dialog):
         lay.addWidget(self.stack)
         self.tip = label("", "faint", wrap=True)
         lay.addWidget(self.tip)
+        self._only_unlocked = False
         row = QHBoxLayout()
         row.addWidget(button("🎁 每日签到 / 通行证", "", self.win.show_pet_pass, 146))
-        row.addWidget(button("🎮 接零食小游戏", "", self.win.show_snack_game, 126))
+        row.addWidget(button("🎮 接零食", "", self.win.show_snack_game, 92))
+        row.addWidget(button("☁️ 云端跳跳乐", "", self.win.show_cloud_game, 114))
+        row.addWidget(button("🎲 随机穿搭", "", self.random_outfit, 102))
+        self.filter_btn = QPushButton("仅看已解锁")
+        self.filter_btn.setObjectName("tab")
+        self.filter_btn.setCheckable(True)
+        self.filter_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.filter_btn.clicked.connect(self._toggle_filter)
+        row.addWidget(self.filter_btn)
         row.addStretch(1)
-        row.addWidget(button("完成", "primary", self.accept, 90))
+        row.addWidget(button("完成", "primary", self.accept, 84))
         lay.addLayout(row)
         self.show_tab(0)
         self.refresh()
+
+    def _toggle_filter(self) -> None:
+        self._only_unlocked = self.filter_btn.isChecked()
+        self.refresh(keep_tip=True)
+
+    def random_outfit(self) -> None:
+        """从已解锁装扮里按部位随机混搭一套。"""
+        self.g.wear.clear()
+        for slot, _sname in SLOTS:
+            pool = [a[0] for a in ACCESSORIES if a[3] == slot and self.g.is_unlocked(a[0])]
+            if pool and random.random() < 0.72:
+                self.g.toggle(random.choice(pool))
+        self.preview.celebrate()
+        self.tip.setText("🎲 已为你随机混搭了一套新造型!")
+        self.refresh(keep_tip=True)
 
     def _grid_page(self) -> tuple[QWidget, QGridLayout]:
         page = QWidget()
@@ -371,6 +410,13 @@ class WardrobeDialog(Dialog):
         grid.setContentsMargins(0, 4, 0, 0)
         grid.setSpacing(6)
         return page, grid
+
+    def _wrap_scroll(self, inner: QWidget) -> QScrollArea:
+        area = QScrollArea()
+        area.setWidgetResizable(True)
+        area.setFrameShape(QFrame.Shape.NoFrame)
+        area.setWidget(inner)
+        return area
 
     def _acc_page(self, slot: str) -> QWidget:
         page, grid = self._grid_page()
@@ -385,7 +431,7 @@ class WardrobeDialog(Dialog):
             grid.addWidget(b, i // 4, i % 4)
             self.item_btns[aid] = b
         grid.setRowStretch(len(items) // 4 + 1, 1)
-        return page
+        return self._wrap_scroll(page)
 
     def _outfit_page(self) -> QWidget:
         """套装:一键穿上;集齐全部部件身后会有一圈套装颜色的光。"""
@@ -412,7 +458,7 @@ class WardrobeDialog(Dialog):
             bl.addWidget(parts_lab)
             grid.addWidget(box, i // 2, i % 2)
             self.outfit_rows[oid] = (btn, parts_lab, box)
-        return page
+        return self._wrap_scroll(page)
 
     def _trick_page(self) -> QWidget:
         page, grid = self._grid_page()
@@ -606,22 +652,28 @@ class WardrobeDialog(Dialog):
         for aid, b in self.item_btns.items():
             a = ACC_BY_ID[aid]
             ok = g.is_unlocked(aid)
+            b.setVisible(ok or not getattr(self, "_only_unlocked", False))
             b.setEnabled(ok)
             b.setChecked(aid in g.wear)
-            b.setText(a[1] if ok else f"🔒 {a[1]}  Lv.{a[2]}")
+            lock_tag = "扭蛋" if a[2] >= 999 else f"Lv.{a[2]}"
+            b.setText(a[1] if ok else f"🔒 {a[1]}  {lock_tag}")
             sets = [o[1] for o in OUTFITS if aid in o[2]]
-            b.setToolTip((f"Lv.{a[2]} 解锁(也能抽卡提前抽到)" if not ok else "点一下戴上 / 摘下")
+            tip_lock = "扭蛋限定(每日免费券/十连扭即可抽到)" if a[2] >= 999 else f"Lv.{a[2]} 解锁(也能抽卡提前抽到)"
+            b.setToolTip((tip_lock if not ok else "点一下戴上 / 摘下")
                          + (f"\n属于套装:{'、'.join(sets)}" if sets else ""))
         full = g.full_outfit()
         for oid, (btn, parts_lab, box) in self.outfit_rows.items():
             o = next(x for x in OUTFITS if x[0] == oid)
+            has_any = any(g.is_unlocked(aid) for aid in o[2])
+            box.setVisible(has_any or not getattr(self, "_only_unlocked", False))
             bits = []
             for aid in o[2]:
                 a = ACC_BY_ID[aid]
                 mark = "✓" if aid in g.wear else ("○" if g.is_unlocked(aid) else "🔒")
-                bits.append(f"{mark}{a[1]}" + ("" if g.is_unlocked(aid) else f"(Lv.{a[2]})"))
+                tag = "扭蛋" if a[2] >= 999 else f"Lv.{a[2]}"
+                bits.append(f"{mark}{a[1]}" + ("" if g.is_unlocked(aid) else f"({tag})"))
             parts_lab.setText("  ".join(bits) + ("\n✨ 已集齐" if full is not None and full[0] == oid else ""))
-            btn.setEnabled(any(g.is_unlocked(aid) for aid in o[2]))
+            btn.setEnabled(has_any)
         for tid, b in self.trick_btns.items():
             if tid in {t[1] for t in TRICKS}:
                 need, _t, name, _d = next(x for x in TRICKS if x[1] == tid)
@@ -666,6 +718,46 @@ class WardrobeDialog(Dialog):
             self.win.desktop_win.update()
 
 
+class PetCustomDialog(Dialog):
+    """3.2 宠物自定义台词与下班倒计时设置窗口。"""
+
+    def __init__(self, win) -> None:
+        super().__init__(win, "宠物台词与下班倒计时")
+        self.g: PetGrowth = win.pet_growth
+        self.setFixedWidth(440)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(24, 20, 24, 18)
+        lay.setSpacing(8)
+        lay.addWidget(label(f"💬 {self.g.name} 的专属台词 & 下班倒计时", "dialogTitle"))
+        lay.addWidget(label("下班时间（24 小时制，例如 18:00，留空关闭）：", "hint"))
+        self.ow_edit = QLineEdit(self)
+        self.ow_edit.setPlaceholderText("18:00")
+        self.ow_edit.setText(self.g.off_work)
+        self.ow_edit.setMaxLength(5)
+        lay.addWidget(self.ow_edit)
+        lay.addWidget(label("专属口头禅（每行一句，最多 10 句，摸摸或闲聊时随机冒出）：", "hint"))
+        self.lines_edit = QPlainTextEdit(self)
+        self.lines_edit.setPlaceholderText("老板来啦注意屏幕 👀\n喝口水休息一下吧 ☕\n今天也是元气满满的一天!")
+        self.lines_edit.setPlainText("\n".join(self.g.custom_lines))
+        self.lines_edit.setFixedHeight(140)
+        lay.addWidget(self.lines_edit)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(button("取消", "", self.reject, 80))
+        row.addWidget(button("保存", "primary", self._save, 86))
+        lay.addLayout(row)
+
+    def _save(self) -> None:
+        import re as _re
+        ow = self.ow_edit.text().strip()
+        if ow and not _re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", ow):
+            info(self, "时间格式不正确", "请填写 24 小时制时间，例如 18:00 或 17:30（留空则关闭）。")
+            return
+        self.g.off_work = ow
+        self.g.custom_lines = [ln.strip()[:40] for ln in self.lines_edit.toPlainText().splitlines() if ln.strip()][:10]
+        self.accept()
+
+
 class PetLifeMixin:
     """宠物照料、衣橱、跟随聊天的动作、群宠物、桌面陪伴、等级标识。"""
 
@@ -701,6 +793,8 @@ class PetLifeMixin:
             self.desktop_mode = dm
         if "desktop_global_keys" in st:
             self.desktop_global_keys = bool(st.get("desktop_global_keys", True))
+        self.desktop_locked = bool(st.get("desktop_locked", False))
+        self._offwork_fired: set[str] = set()
         pos = st.get("desktop_pos")
         if isinstance(pos, list) and len(pos) == 2 and all(type(v) is int for v in pos):
             self.desktop_pos = pos
@@ -716,17 +810,58 @@ class PetLifeMixin:
 
     def _settings_petlife(self) -> dict:
         return {"desktop_pet": self.desktop_pet_on, "desktop_pos": self.desktop_pos,
-                "desktop_mode": self.desktop_mode, "desktop_global_keys": self.desktop_global_keys}
+                "desktop_mode": self.desktop_mode, "desktop_global_keys": self.desktop_global_keys,
+                "desktop_locked": bool(getattr(self, "desktop_locked", False))}
 
     def _tick_petlife(self, now: float) -> None:
         if self._save_tick % 5 == 0:
             self._sync_level()
+        if self._save_tick % 30 == 0:
+            self._check_off_work()
         if self._save_tick % 60 == 0:
             self._care_tick(now)
         for tag, gp in self.gpets.items():
             if gp.dirty and now - self._gpet_sent.get(tag, -1e9) >= GPET_RESEND:
                 self.send_gpet(tag)
         self.desktop_pet_sync()
+
+    def _check_off_work(self) -> None:
+        """3.2 下班倒计时自动冒泡播报(15 分钟 / 5 分钟 / 到点撒花)。"""
+        ow = getattr(self.pet_growth, "off_work", "")
+        if not ow:
+            return
+        try:
+            hh, mm = (int(x) for x in ow.split(":"))
+        except Exception:
+            return
+        lt = time.localtime()
+        now_m = lt.tm_hour * 60 + lt.tm_min
+        left = hh * 60 + mm - now_m
+        day = time.strftime("%Y-%m-%d", lt)
+        fired = getattr(self, "_offwork_fired", None)
+        if fired is None:
+            fired = self._offwork_fired = set()
+        for mark, msg in ((15, "⏰ 还有 15 分钟就下班啦，坚持一下~"), (5, "🎉 还有 5 分钟下班！收拾准备冲！"),
+                          (0, "🎊 下班时间到啦！快去享受自由时光吧~")):
+            key = f"{day}:{mark}"
+            if left == mark and key not in fired:
+                fired.add(key)
+                self.pet.say(msg, 5.0)
+                if mark == 0:
+                    self.pet.celebrate()
+                    if self.fun.get("effects"):
+                        self.effects.play("confetti")
+                if self.desktop_win is not None and self.desktop_win.isVisible():
+                    self.desktop_win.pet.say(msg, 5.0)
+                    if mark == 0:
+                        self.desktop_win.pet.celebrate()
+
+    def show_pet_custom(self) -> None:
+        if PetCustomDialog(self).exec():
+            if self.pet_growth.custom_lines:
+                self.pet.say(random.choice(self.pet_growth.custom_lines), 3.0)
+            elif self.pet_growth.off_work:
+                self.pet.say(f"记好啦！{self.pet_growth.off_work} 准时提醒你下班~", 3.0)
 
     def _place_petlife(self) -> None:
         self._place_gpet()
@@ -856,7 +991,24 @@ class PetLifeMixin:
         ci_tag = "  🔴 可签到" if can_checkin(g) else ""
         m.addAction(f"🎁  每日签到与萌宠通行证…{ci_tag}", self.show_pet_pass)
         m.addAction("🎮  接零食大作战…", self.show_snack_game)
+        m.addAction("☁️  云端跳跳乐…", self.show_cloud_game)
         m.addAction("👗  衣橱、染色与形态…", self.show_wardrobe)
+        from ..fun import BUBBLE_AURAS
+        am = make_menu(m)
+        am.setTitle("✨  气泡边缘特效(12 款)")
+        a0 = am.addAction("关闭边缘特效", lambda: g.set_aura(""))
+        a0.setCheckable(True)
+        a0.setChecked(not g.aura)
+        for aid, aname, lv, _col in BUBBLE_AURAS:
+            if g.has_aura(aid):
+                act = am.addAction(aname, lambda _=False, i=aid: g.set_aura(i))
+                act.setCheckable(True)
+                act.setChecked(g.aura == aid)
+            else:
+                tag = "扭蛋限定" if lv >= 999 else f"Lv.{lv} 或抽卡"
+                am.addAction(f"🔒 {aname}  ·  {tag}").setEnabled(False)
+        m.addMenu(am)
+        m.addAction("💬  自定义台词与下班倒计时…", self.show_pet_custom)
         m.addAction("📔  宠物日记", self.show_diary)
         act = m.addAction("🖥  桌面陪伴(最小化时在桌面漫步陪你打字)")
         act.setCheckable(True)
@@ -1070,6 +1222,17 @@ class PetLifeMixin:
         if self.desktop_win is not None:
             self.desktop_win.update()
 
+    def show_cloud_game(self) -> None:
+        CloudJumpDialog(self).exec()
+        self.pet.update()
+        if self.desktop_win is not None:
+            self.desktop_win.update()
+
+    def set_desktop_locked(self, on: bool) -> None:
+        self.desktop_locked = bool(on)
+        if self.desktop_win is not None and self.desktop_win.isVisible():
+            self.desktop_win.pet.say("位置已锁定 🔒" if self.desktop_locked else "已解锁，可以自由拖动啦~", 2.0)
+
     def set_desktop_mode(self, mode: str) -> None:
         if mode in ("roam", "peek", "fixed"):
             self.desktop_mode = mode
@@ -1081,9 +1244,9 @@ class PetLifeMixin:
         if self.desktop_win is not None:
             self.desktop_win.sync_timers()
 
-    def on_desktop_keybeat(self, kind: str) -> None:
+    def on_desktop_keybeat(self, kind: str, is_repeat: bool = False) -> None:
         """桌面陪伴期间收到全局打字节拍:增加宠物经验与敲击数。"""
-        if self.pet_growth.tap():
+        if self.pet_growth.tap(is_repeat=is_repeat):
             self._pet_level_up()
             if self.desktop_win is not None:
                 self.desktop_win.pet.celebrate()

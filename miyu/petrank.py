@@ -40,11 +40,16 @@ def level_of(xp: int) -> int:
 
 
 def make_card(pid: str, nick: str, species: str, pet_name: str, xp: int, wk: str, w0: int, wear: list,
-              ts_ms: int | None = None) -> dict:
+              ts_ms: int | None = None, snack_best: int = 0, cloud_best: int = 0) -> dict:
     xp = max(0, int(xp))
-    return {"v": 1, "id": pid, "n": str(nick)[:24], "sp": species if species in SPECIES else "cat",
+    card = {"v": 1, "id": pid, "n": str(nick)[:24], "sp": species if species in SPECIES else "cat",
             "pn": str(pet_name)[:8], "lv": level_of(xp), "xp": xp, "wk": wk, "w0": max(0, min(int(w0), xp)),
             "wear": [w for w in wear if w in ACC_BY_ID][:8], "ts": int(time.time() * 1000) if ts_ms is None else ts_ms}
+    if snack_best > 0:
+        card["sb"] = min(100_000, int(snack_best))
+    if cloud_best > 0:
+        card["cb"] = min(100_000, int(cloud_best))
+    return card
 
 
 def _body(card: dict) -> bytes:
@@ -86,6 +91,12 @@ def clean_card(raw, now_ms: int | None = None) -> dict | None:
         return None
     card = {"v": 1, "id": pid, "n": n, "sp": sp, "pn": pn, "lv": lv, "xp": xp, "wk": wk, "w0": w0,
             "wear": list(wear), "ts": ts}
+    for gk in ("sb", "cb"):
+        if gk in raw:
+            gv = raw[gk]
+            if type(gv) is not int or not (0 <= gv <= 100_000):
+                return None
+            card[gk] = gv
     if not C.verify(pub, sig, _body(card)):
         return None
     card["sig"] = raw["sig"]
@@ -136,14 +147,26 @@ def standings(cards: dict[str, dict], members, kind: str = "level", wk: str | No
         if members is not None and pid not in members:
             continue
         gain = week_gain(c, wk)
+        sb, cb = int(c.get("sb", 0)), int(c.get("cb", 0))
         if kind == "week" and gain <= 0:
+            continue
+        if kind == "snack" and sb <= 0:
+            continue
+        if kind == "cloud" and cb <= 0:
             continue
         idx, form, _d = form_of(c["lv"])
         rows.append({"id": pid, "nick": c["n"], "pet": c["pn"], "species": c["sp"], "lv": c["lv"], "xp": c["xp"],
-                     "gain": gain, "form": form, "wear": c["wear"], "ts": c["ts"], "sus": bool(flags.get(pid))})
+                     "gain": gain, "sb": sb, "cb": cb, "form": form, "wear": c["wear"], "ts": c["ts"],
+                     "sus": bool(flags.get(pid))})
     if kind == "week":
         key = lambda r: (-r["gain"], -r["lv"], -r["xp"], r["id"])         # noqa: E731
         score = lambda r: (r["gain"],)                                     # noqa: E731
+    elif kind == "snack":
+        key = lambda r: (-r["sb"], -r["lv"], r["id"])                      # noqa: E731
+        score = lambda r: (r["sb"],)                                       # noqa: E731
+    elif kind == "cloud":
+        key = lambda r: (-r["cb"], -r["lv"], r["id"])                      # noqa: E731
+        score = lambda r: (r["cb"],)                                       # noqa: E731
     else:
         key = lambda r: (-r["lv"], -r["xp"], r["id"])                      # noqa: E731
         score = lambda r: (r["lv"], r["xp"])                               # noqa: E731

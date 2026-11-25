@@ -300,7 +300,7 @@ class AccountStore:
 
 # ---------------------------------------------------------------- 消息 ⇄ 可保存的字典
 MSG_FIELDS = ("mid", "sender", "nick", "tag", "text", "mine", "time", "mime", "w", "h", "reply", "at", "file",
-              "mention", "sticker", "delivered", "read", "edited", "card", "skin", "anon", "fav", "reactions",
+              "mention", "sticker", "delivered", "read", "edited", "card", "skin", "aura", "anon", "fav", "reactions",
               "title", "level")
 
 
@@ -335,6 +335,7 @@ def msg_kwargs(d: dict) -> dict | None:
         "sticker": bool(d.get("sticker")),
         "card": d.get("card") if isinstance(d.get("card"), dict) else None,
         "skin": d.get("skin") if isinstance(d.get("skin"), str) else None,
+        "aura": d.get("aura") if isinstance(d.get("aura"), str) else None,
         "anon": bool(d.get("anon")),
         "fav": d.get("fav") if isinstance(d.get("fav"), dict) else None,
     }

@@ -125,6 +125,9 @@ class ChatMixin:
                 data = b""
             if 0 < len(data) <= AVATAR_MAX:
                 self.my_avatar = (data, str(av.get("mime", "image/jpeg")))
+        qp = acct.get("quick_phrases")
+        if isinstance(qp, list):
+            self.quick_phrases = [str(x).strip()[:80] for x in qp if isinstance(x, str) and x.strip()][:30]
 
     def _save_chat(self) -> dict:
         groups = {}
@@ -132,6 +135,8 @@ class ChatMixin:
             if conv.kind in ("lobby", "room") and (conv.notice or conv.pins or conv.name_t):
                 groups[key] = {"notice": conv.notice, "pins": conv.pins, "pins_t": conv.pins_t, "name_t": conv.name_t}
         d = {"groups": groups, "rank": self.rank}
+        if isinstance(getattr(self, "quick_phrases", None), list):
+            d["quick_phrases"] = list(self.quick_phrases)[:30]
         if self.my_avatar:
             d["avatar"] = {"img": base64.b64encode(self.my_avatar[0]).decode("ascii"), "mime": self.my_avatar[1]}
         return d

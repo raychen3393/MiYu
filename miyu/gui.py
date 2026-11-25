@@ -535,6 +535,15 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         self.search_edit.next_hit.connect(lambda: self.search_step(1))
         self.search_edit.closed.connect(self.close_search)
         sl.addWidget(self.search_edit, 1)
+        self._search_filter = "all"
+        self.search_filter_btn = QToolButton()
+        self.search_filter_btn.setText("全部")
+        self.search_filter_btn.setObjectName("link")
+        self.search_filter_btn.setFixedWidth(52)
+        self.search_filter_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.search_filter_btn.clicked.connect(self._cycle_search_filter)
+        self.search_filter_btn.setToolTip("切换筛选:全部 / 只看图片 / 只看文件 / 只看我发的")
+        sl.addWidget(self.search_filter_btn)
         self.search_count = label("", "searchCount")
         sl.addWidget(self.search_count)
         self.search_up = tool("chevron_up", 28, "round", "上一个(更早)  Enter")
@@ -620,6 +629,18 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         self.chat_panel = panel
         self.pet = TypingPet(panel)
         self.effects = EffectLayer(panel)
+        self._below_unread = 0
+        self.jump_btn = QToolButton(panel)
+        self.jump_btn.setObjectName("jumpBottom")
+        self.jump_btn.setText("↓ 回到底部")
+        self.jump_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.jump_btn.setStyleSheet(
+            "QToolButton#jumpBottom { background: rgba(124,92,255,220); color: #FFFFFF; border: none;"
+            " border-radius: 15px; padding: 5px 14px; font-weight: 600; font-size: 12px; }"
+            "QToolButton#jumpBottom:hover { background: rgba(124,92,255,245); }"
+        )
+        self.jump_btn.clicked.connect(self._jump_to_bottom)
+        self.jump_btn.hide()
         panel.pet, panel.effects, panel.pill = self.pet, self.effects, pill
         self._pill, self._composer = pill, comp
         pill.installEventFilter(self)
@@ -1126,7 +1147,45 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
 
     def _on_scroll(self, value: int) -> None:
         self._stick = value >= self.msg_area.verticalScrollBar().maximum() - 40 and self._win_bottom
+        if self._stick:
+            self._below_unread = 0
+        self._sync_jump_btn()
         self.maybe_page(value)
+
+    def _sync_jump_btn(self) -> None:
+        btn = getattr(self, "jump_btn", None)
+        if btn is None:
+            return
+        if self._stick or self.current is None:
+            btn.hide()
+            return
+        btn.setText(f"↓ {self._below_unread} 条新消息" if self._below_unread else "↓ 回到底部")
+        btn.adjustSize()
+        pw = self.chat_panel.width()
+        ch = self._composer.height() if getattr(self, "_composer", None) else 70
+        btn.move(max(12, pw - btn.width() - 24), max(HEADER_H + 12, self.chat_panel.height() - ch - btn.height() - 14))
+        btn.show()
+        btn.raise_()
+
+    def _jump_to_bottom(self) -> None:
+        self._below_unread = 0
+        self._stick = True
+        sb = self.msg_area.verticalScrollBar()
+        sb.setValue(sb.maximum())
+        self._sync_jump_btn()
+
+    def set_chat_font_size(self, px: int) -> None:
+        px = max(12, min(18, int(px)))
+        self.fun["font_px"] = px
+        f = self.font()
+        f.setPixelSize(px)
+        self.msg_area.setFont(f)
+        self._refit_bubbles()
+
+    def set_bubble_density(self, compact: bool) -> None:
+        self.fun["compact_bubbles"] = bool(compact)
+        self.msg_layout.setSpacing(1 if compact else 3)
+        self._refit_bubbles()
 
     # ------------------------------------------------------------ 添加消息
     def _system(self, conv: Conv, text: str) -> None:
@@ -1180,6 +1239,11 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
             prev = conv.messages[-2] if len(conv.messages) >= 2 else None
             if m.mine:
                 self._stick = True
+                self._below_unread = 0
+                self._sync_jump_btn()
+            elif not self._stick and not m.system:
+                self._below_unread += 1
+                self._sync_jump_btn()
             self._win_hi = len(conv.messages)
             self._append_msg(conv, m, prev, self._bubble_maxw())
             self.after_live_append()
@@ -1505,12 +1569,13 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         reply = self._reply_payload()
         at = self._collect_at(text) if conv.kind != "dm" else []
         skin = self.current_skin() if not burn else None
-        mid = self.core.send_text(scope, target, text, burn, reply=reply, at=at, skin=skin)
+        aura = (self.pet_growth.aura or None) if not burn else None
+        mid = self.core.send_text(scope, target, text, burn, reply=reply, at=at, skin=skin, aura=aura)
         if mid is None:
             self._system(conv, "发送失败:网络模块未运行")
             return
         m = Msg(text, mid=mid, sender=self.me["id"], nick=self.me.get("nick", ""), tag=self.me.get("tag", ""),
-                mine=True, burn=burn, reply=reply, at=at, skin=skin)
+                mine=True, burn=burn, reply=reply, at=at, skin=skin, aura=aura)
         self._add_message(conv, m)
         self.input.clear()
         self.pending_at.clear()
@@ -1564,11 +1629,16 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         thumbs = [imaging.thumbnail(im, 108, 10, shadow=False) for im in previews if im is not None]
         can_collage = (len(encoded) >= 2 and not self.burn_secs
                        and not any(isinstance(im, imaging.Gif) for im in imgs))
+        raw_single = first if (len(encoded) == 1 and not isinstance(imgs[0], imaging.Gif)) else None
         dlg = SendImageDialog(self, preview, len(encoded), sum(len(e[0]) for e in encoded), self.burn_secs,
                               self.conv_label(conv), bad + len(imgs) - len(encoded),
-                              thumbs=thumbs, can_collage=can_collage)
+                              thumbs=thumbs, can_collage=can_collage, raw_image=raw_single)
         if not dlg.exec():
             return
+        if getattr(dlg, "edited_image", None) is not None:
+            enc_mod = imaging.encode_any(dlg.edited_image)
+            if enc_mod:
+                encoded = [enc_mod]
         if getattr(dlg, "merge_collage", False):
             merged = compose_collage([im for im in previews if im is not None])
             enc_one = imaging.encode_any(merged) if merged is not None else None
@@ -2200,18 +2270,36 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         if self.input.isEnabled():
             self.input.setFocus()
 
-    @staticmethod
-    def _matches(m: Msg, q: str) -> bool:
+    _SEARCH_FILTERS = [("all", "全部"), ("img", "图片"), ("file", "文件"), ("mine", "我发的")]
+
+    def _cycle_search_filter(self) -> None:
+        order = [k for k, _ in self._SEARCH_FILTERS]
+        nxt = order[(order.index(getattr(self, "_search_filter", "all")) + 1) % len(order)]
+        self._search_filter = nxt
+        self.search_filter_btn.setText(dict(self._SEARCH_FILTERS)[nxt])
+        self._on_search_text(self.search_edit.text())
+
+    def _matches(self, m: Msg, q: str) -> bool:
         if m.system or m.gone:
             return False
+        flt = getattr(self, "_search_filter", "all")
+        if flt == "img" and m.img is None:
+            return False
+        if flt == "file" and not m.file:
+            return False
+        if flt == "mine" and not m.mine:
+            return False
+        if not q:
+            return flt != "all"
         if m.file:
             return q in str(m.file.get("name", "")).lower()
-        return q in m.text.lower()
+        return q in m.text.lower() or q in (m.nick or "").lower()
 
     def _on_search_text(self, text: str) -> None:
         q = text.strip().lower()
         conv = self.current
-        self.search_hits = self.search_mids(conv, q) if q and conv else []
+        flt = getattr(self, "_search_filter", "all")
+        self.search_hits = self.search_mids(conv, q) if (q or flt != "all") and conv else []
         self.search_idx = len(self.search_hits) - 1        # 从最新的一条开始
         self._show_hit()
 
@@ -2220,7 +2308,8 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         cur = self.search_hits[self.search_idx] if 0 <= self.search_idx < len(self.search_hits) else None
         q = self.search_edit.text().strip().lower()
         conv = self.current
-        self.search_hits = self.search_mids(conv, q) if q and conv else []
+        flt = getattr(self, "_search_filter", "all")
+        self.search_hits = self.search_mids(conv, q) if (q or flt != "all") and conv else []
         self.search_idx = self.search_hits.index(cur) if cur in self.search_hits else len(self.search_hits) - 1
         self._show_hit(scroll=False)
 
@@ -2232,12 +2321,14 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
 
     def _show_hit(self, scroll: bool = True) -> None:
         q = self.search_edit.text().strip()
+        flt = getattr(self, "_search_filter", "all")
+        active = bool(q) or flt != "all"
         n = len(self.search_hits)
-        if not q:
+        if not active:
             self.search_count.setText("")
         else:
             self.search_count.setText(f"{self.search_idx + 1}/{n}" if n else "无结果")
-        self.search_count.setProperty("empty", bool(q) and not n)
+        self.search_count.setProperty("empty", active and not n)
         repolish(self.search_count)
         for b in (self.search_up, self.search_down):
             b.setEnabled(n > 1)
@@ -2265,7 +2356,7 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         g.daily["levelup"] = lv
         lines: list[tuple[str, str]] = []
         form_now, form_before = form_of(lv), form_of(lv - 1)
-        evolved = form_now[0] != form_before[0] and lv in (EVOLVE_LEVEL, MYTHIC_LEVEL)
+        evolved = form_now[0] != form_before[0] and lv in (EVOLVE_LEVEL, MYTHIC_LEVEL, 60, 80, 100)
         if form_now[0] != form_before[0]:
             lines.append(("🦋" if evolved else "🌱", f"进入「{form_now[1]}」:{form_now[2]}"))
         for aid, name, _lv, slot in g.unlocked_at(lv):
@@ -2275,6 +2366,10 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         for sid, name, need, *_rest in theme.SKINS:
             if need == lv:
                 lines.append(("💬", f"气泡皮肤「{name}」"))
+        from .fun import BUBBLE_AURAS
+        for _aid, aname, need, _col in BUBBLE_AURAS:
+            if need == lv:
+                lines.append(("✨", f"动态气泡边缘特效「{aname}」"))
         for need, tid, name, _dur in TRICKS:
             if need == lv:
                 lines.append(("🎭", f"新动作「{name}」(右键宠物 → 表演一个)"))
@@ -2350,25 +2445,29 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         return self.input.viewport().mapTo(self.chat_panel, r.center())
 
     def on_keystroke(self, kind: str) -> None:
-        self.pet.tap(kind)                         # 宠物关掉时也记数,连击照常算
+        from .fun import ANTI_HOLD_LEVEL
+        is_repeat = bool(getattr(self.input, "last_key_repeat", False))
+        blocked = is_repeat and self.pet_growth.level >= ANTI_HOLD_LEVEL
+        if not blocked:
+            self.pet.tap(kind)                     # 宠物关掉时也记数,连击照常算
         self.record_key()
         self.privacy_touch()
-        if self.visitor is not None:               # 来做客的宠物也跟着拍
+        if self.visitor is not None and not blocked:   # 来做客的宠物也跟着拍
             self.visitor.tap(kind)
             self.visit["taps"] += 1
         if self.current is not None:
             self.bump_heat(self.current, HEAT_KEY)
-        if self.pet_growth.tap():
+        if self.pet_growth.tap(is_repeat=is_repeat):
             self._pet_level_up()
         if self.pet_growth.pending:
             self._show_achievements()
-        if self.fun["sparks"] and self.window_visible():
+        if self.fun["sparks"] and self.window_visible() and not blocked:
             pt = self._cursor_point()
             if kind == "delete":
                 self.effects.fragments(pt.x(), pt.y())
             else:
                 self.effects.sparks(pt.x(), pt.y(), self.pet.combo if self.fun["combo"] else 1)
-        if self.fun["keysound"]:
+        if self.fun["keysound"] and not blocked:
             self.keysound.play(kind)
 
     def _sent_fx(self) -> None:
@@ -2816,6 +2915,10 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
                 self.fun[k] = bool(fun[k])
         if "bubble" not in fun and fun.get("pop") is False:      # 2.4 以前关掉了「气泡弹出动画」
             self.fun["bubble"] = "off"
+        if type(fun.get("font_px")) is int and 12 <= fun["font_px"] <= 18:
+            self.set_chat_font_size(fun["font_px"])
+        if "compact_bubbles" in fun:
+            self.set_bubble_density(bool(fun["compact_bubbles"]))
         self._hooks("restore", acct, st)
         if self.fun.get("keysound"):
             threading.Thread(target=self.keysound.prepare, name="miyu-keyprep", daemon=True).start()
@@ -3052,7 +3155,7 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
                 burn=int(d.get("burn", 0)), img=d.get("img"), mime=d.get("mime"),
                 w=int(d.get("w") or 0), h=int(d.get("h") or 0), reply=d.get("reply"), at=d.get("at") or [],
                 file=d.get("file"), sticker=bool(d.get("sticker")), card=d.get("card"), skin=d.get("skin"),
-                anon=bool(d.get("anon")))
+                aura=d.get("aura"), anon=bool(d.get("anon")))
         m.title = str(d.get("title") or "")
         m.level = int(d.get("level") or 0) if self.fun.get("lv_badge", True) else 0
         if isinstance(d.get("vid"), (bytes, bytearray)) and m.anon:

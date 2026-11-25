@@ -504,12 +504,80 @@ def compose_collage(images: list[QImage], canvas_w: int = 1080) -> QImage | None
     return out
 
 
+class _MosaicPreview(QLabel):
+    """3.2 截图发送前预览 + 鼠标涂抹打马赛克控件(防发错图 & 快速遮挡敏感信息)。"""
+
+    def __init__(self, img: QImage, parent=None) -> None:
+        super().__init__(parent)
+        self._orig = img.convertToFormat(QImage.Format.Format_ARGB32)
+        self._work = self._orig.copy()
+        self.mosaic_on = False
+        self.dirty = False
+        self._down = False
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._refresh()
+
+    def set_mosaic(self, on: bool) -> None:
+        self.mosaic_on = bool(on)
+        self.setCursor(Qt.CursorShape.CrossCursor if self.mosaic_on else Qt.CursorShape.ArrowCursor)
+
+    def reset(self) -> None:
+        self._work = self._orig.copy()
+        self.dirty = False
+        self._refresh()
+
+    def _refresh(self) -> None:
+        pm = QPixmap.fromImage(self._work).scaled(
+            340, 240, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+        )
+        self.setPixmap(pm)
+        self.setFixedSize(pm.size())
+
+    def _paint_mosaic_at(self, pos) -> None:
+        if not self.mosaic_on or self.width() <= 0 or self.height() <= 0:
+            return
+        w, h = self._work.width(), self._work.height()
+        ix = int(pos.x() * w / self.width())
+        iy = int(pos.y() * h / self.height())
+        bs = max(8, min(w, h) // 28)
+        rad = bs * 2
+        x0 = max(0, ((ix - rad) // bs) * bs)
+        y0 = max(0, ((iy - rad) // bs) * bs)
+        x1 = min(w, ix + rad)
+        y1 = min(h, iy + rad)
+        p = QPainter(self._work)
+        p.setPen(Qt.PenStyle.NoPen)
+        for bx in range(x0, x1, bs):
+            for by in range(y0, y1, bs):
+                cx = min(w - 1, bx + bs // 2)
+                cy = min(h - 1, by + bs // 2)
+                p.setBrush(self._work.pixelColor(cx, cy))
+                p.drawRect(bx, by, bs, bs)
+        p.end()
+        self.dirty = True
+        self._refresh()
+
+    def mousePressEvent(self, e) -> None:
+        if e.button() == Qt.MouseButton.LeftButton and self.mosaic_on:
+            self._down = True
+            self._paint_mosaic_at(e.position() if hasattr(e, "position") else e.pos())
+
+    def mouseMoveEvent(self, e) -> None:
+        if self._down and self.mosaic_on:
+            self._paint_mosaic_at(e.position() if hasattr(e, "position") else e.pos())
+
+    def mouseReleaseEvent(self, e) -> None:
+        self._down = False
+
+
 class SendImageDialog(Dialog):
     def __init__(self, parent, preview: QPixmap, count: int, total: int, burn: int, target: str, bad: int,
-                 thumbs: list[QPixmap] | None = None, can_collage: bool = False) -> None:
+                 thumbs: list[QPixmap] | None = None, can_collage: bool = False,
+                 raw_image: QImage | None = None) -> None:
         super().__init__(parent, "发送图片")
         self.setMinimumWidth(420)
         self.collage_sw: Switch | None = None
+        self._mosaic: _MosaicPreview | None = None
         lay = QVBoxLayout(self)
         lay.setContentsMargins(28, 24, 28, 22)
         lay.setSpacing(8)
@@ -529,6 +597,20 @@ class SendImageDialog(Dialog):
                 cell.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 gl.addWidget(cell, idx // cols, idx % cols)
             lay.addWidget(grid_wrap, 0, Qt.AlignmentFlag.AlignHCenter)
+        elif raw_image is not None and not raw_image.isNull() and count == 1:
+            self._mosaic = _MosaicPreview(raw_image, self)
+            lay.addWidget(self._mosaic, 0, Qt.AlignmentFlag.AlignHCenter)
+            mrow = QHBoxLayout()
+            mrow.addStretch(1)
+            mbtn = QPushButton("🎨 涂抹马赛克", self)
+            mbtn.setObjectName("tab")
+            mbtn.setCheckable(True)
+            mbtn.setCursor(Qt.CursorShape.PointingHandCursor)
+            mbtn.toggled.connect(self._mosaic.set_mosaic)
+            mrow.addWidget(mbtn)
+            mrow.addWidget(button("↩ 还原", "link", self._mosaic.reset, 64))
+            mrow.addStretch(1)
+            lay.addLayout(mrow)
         else:
             pic = QLabel(self)
             pic.setPixmap(preview)
@@ -563,6 +645,10 @@ class SendImageDialog(Dialog):
     @property
     def merge_collage(self) -> bool:
         return bool(self.collage_sw is not None and self.collage_sw.isChecked())
+
+    @property
+    def edited_image(self) -> QImage | None:
+        return self._mosaic._work if (self._mosaic is not None and self._mosaic.dirty) else None
 
 
 class _ZoomCanvas(QWidget):

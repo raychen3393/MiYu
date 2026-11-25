@@ -118,7 +118,7 @@ class UxMixin:
         if m.system or m.gone:
             return []
         conv = self.current
-        keys = ["reply"]
+        keys = ["react:👍", "react:❤️", "react:😂", "reply"]
         if m.img is None and not m.file and not m.card and m.text and not m.burn:
             keys.append("copy")
         if conv is not None and conv.kind != "self" and not m.burn:
@@ -176,6 +176,9 @@ class UxMixin:
 
     def quick_action(self, m: Msg, key: str, pos=None) -> None:
         if m.gone:
+            return
+        if key.startswith("react:"):
+            self.react(m, key[6:])
             return
         if key == "reply":
             self.start_reply(m)
