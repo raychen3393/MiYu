@@ -20,7 +20,7 @@ from miyu.window import pet as win_pet, records as win_records  # noqa: E402
 
 class V30BugfixAndSecurityTests(unittest.TestCase):
     def test_version_and_changelog_synced(self):
-        self.assertEqual(version.VERSION, "3.7.0")
+        self.assertEqual(version.VERSION, "3.9.3")
         self.assertEqual(changelog.CHANGELOG[0][0], version.VERSION)
 
     def test_password_change_preserves_all_encrypted_blobs(self):
@@ -318,6 +318,202 @@ class V30Pet3DAndUIUpgradeTests(unittest.TestCase):
         self.assertEqual((c2["bg_blur_px"], c2["bg_blur"]), (0, False))
         # 4. 冗余实验文件 petgl.py 已清理
         self.assertFalse(os.path.exists(os.path.join(os.path.dirname(__file__), "..", "miyu", "petgl.py")))
+
+    def test_v380_games(self):
+        from miyu import arcade, cards, core, petmerge, petpvz, petrank as PR, pettd, sound
+        from miyu.widgets import Msg
+        # 1. 双塔防成长记录、每日首胜双倍与持久化
+        g = fun.PetGrowth()
+        g_td, _ = g.record_td_score(1800, 10, today="2026-11-26")
+        g_pvz, _ = g.record_pvz_score(1500, 8, today="2026-11-26")
+        self.assertGreater(g_td, 0)
+        self.assertGreater(g_pvz, 0)
+        self.assertEqual((g.td_best, g.td_waves, g.pvz_best, g.pvz_waves), (1800, 10, 1500, 8))
+        pts_before = g.pass_pts
+        self.assertTrue(g.claim_daily_game_bonus(today="2026-11-26"))
+        self.assertFalse(g.claim_daily_game_bonus(today="2026-11-26"))
+        self.assertEqual(g.pass_pts, pts_before + 30)
+        g2 = fun.PetGrowth(g.to_dict())
+        self.assertEqual((g2.td_best, g2.td_waves, g2.pvz_best, g2.pvz_waves, g2.game_first_day),
+                         (1800, 10, 1500, 8, "2026-11-26"))
+        # 2. 排行榜名片新增保卫萌宠(td)与萌宠大战(pvz)签名榜单
+        c = PR.make_card("c" * 64, "塔防王", "fox", "小狐", 900, "2026-W48", 0, [], td_best=3200, pvz_best=2900)
+        self.assertEqual(PR.standings({"c" * 64: c}, None, "td")[0]["tb"], 3200)
+        self.assertEqual(PR.standings({"c" * 64: c}, None, "pvz")[0]["pb"], 2900)
+        # 3. 战绩挑战卡校验与渲染
+        raw_card = {"type": "score", "g": "td", "s": 3200, "d": "金萝卜通关", "pn": "小狐", "sp": "fox", "lv": 12, "wear": []}
+        self.assertIsNotNone(core.clean_card(raw_card))
+        sc_w = cards.make_card(Msg("战绩", card=raw_card), {})
+        self.assertIsInstance(sc_w, cards.GameScoreCard)
+        # 4. 程序合成小游戏音效无外部依赖且可生成 PCM
+        for k in ("pop", "merge", "combo", "coin", "shoot", "freeze", "boom", "jump", "boost", "hurt", "build", "win", "lose"):
+            pcm = sound.game_sfx_pcm(k)
+            self.assertGreater(len(pcm), 500)
+        # 5. 双塔防与游乐厅核心数据结构 & 建塔/种植物逻辑
+        self.assertEqual(len(pettd.TD_MAPS), 3)
+        self.assertEqual(len(pettd.TD_TOWERS), 5)
+        self.assertEqual(len(petpvz.PVZ_PLANTS), 6)
+        self.assertEqual(len(arcade.ARCADE_GAMES), 5)
+        td_stage = pettd._TDStage(None, g, "cat")
+        td_stage.stop()
+        td_stage.running = True
+        self.assertTrue(td_stage.build_at((3, 2), "cat"))
+        self.assertTrue(td_stage.upgrade_selected())
+        self.assertEqual(td_stage.towers[(3, 2)]["lv"], 2)
+        self.assertTrue(td_stage.sell_selected())
+        self.assertNotIn((3, 2), td_stage.towers)
+        pvz_stage = petpvz._PvZStage(None)
+        pvz_stage.stop()
+        pvz_stage.running = True
+        self.assertTrue(pvz_stage.plant_at(0, 0, "sun"))
+        self.assertIn((0, 0), pvz_stage.plants)
+        # 6. 合成大萌宠 3 道具可用
+        mg_stage = petmerge._MergePetStage(None)
+        mg_stage.stop()
+        mg_stage.running = True
+        mg_stage.balls.append(petmerge._MergeBall(200, 420, 0))
+        self.assertTrue(mg_stage.use_shake())
+        self.assertEqual(mg_stage.shake_left, 0)
+        self.assertTrue(mg_stage.use_swap())
+        self.assertEqual(mg_stage.swap_left, 0)
+
+    def test_v382_single_instance_and_recovery(self):
+        import sqlite3
+        import tempfile
+        import threading
+        from unittest import mock
+        from miyu import app as app_mod, storage
+        from miyu.window import records as rec_mod
+
+        with tempfile.TemporaryDirectory() as tmp:
+            # 1. 单实例互斥锁:第 2 个实例被拦截并触发唤醒回调,释放后可重新获取(供更新/注销重启)
+            woke = threading.Event()
+            g1 = app_mod.SingleInstance(tmp)
+            self.assertTrue(g1.acquire())
+            g1.set_wake_handler(woke.set)
+            g2 = app_mod.SingleInstance(tmp)
+            self.assertFalse(g2.acquire())
+            self.assertTrue(g2.wake_existing())
+            self.assertTrue(woke.wait(2.0))
+            g1.release()
+            g3 = app_mod.SingleInstance(tmp)
+            self.assertTrue(g3.acquire())
+            g3.release()
+
+            # 2. p.bin 自动热备份 p.bin.bak 与损坏自动兜底恢复
+            st = storage.AccountStore(tmp, os.path.join(tmp, "stk"))
+            seed = storage.b64e(b"\x11" * 32)
+            self.assertTrue(st.save_account({"seed": seed, "nick": "旧号", "dbkey": storage.b64e(b"\x22" * 32)}))
+            self.assertTrue(st.save_account({"seed": seed, "nick": "新版", "dbkey": storage.b64e(b"\x22" * 32)}))
+            self.assertTrue(os.path.exists(os.path.join(tmp, storage.ACCOUNT_BACKUP)))
+            # 模拟主文件意外损坏:仍能从 p.bin.bak 自动恢复身份与 dbkey
+            with open(os.path.join(tmp, storage.ACCOUNT_FILE), "wb") as f:
+                f.write(b"corrupted")
+            loaded = st.load_account()
+            self.assertIsNotNone(loaded)
+            self.assertEqual(loaded["seed"], seed)
+            self.assertEqual(loaded["dbkey"], storage.b64e(b"\x22" * 32))
+            st.wipe()
+            self.assertFalse(os.path.exists(os.path.join(tmp, storage.ACCOUNT_BACKUP)))
+
+            # 3. m.db 遇到 database is locked 时绝不改名成 .broken 建空库
+            os.makedirs(tmp, exist_ok=True)
+            db_path = os.path.join(tmp, "m.db")
+            with open(db_path, "wb") as f:
+                f.write(b"dummy-db")
+
+            class _FakeRec(rec_mod.RecordsMixin):
+                def __init__(self):
+                    self.store = st
+                    self.db = None
+                    self._db_key = None
+                    self.account = {"dbkey": storage.b64e(b"\x33" * 32)}
+
+            fr = _FakeRec()
+            with mock.patch.object(rec_mod, "MsgDB", side_effect=sqlite3.OperationalError("database is locked")):
+                with mock.patch.object(rec_mod.time, "sleep"):
+                    self.assertFalse(fr.open_history())
+            self.assertTrue(os.path.exists(db_path))
+            self.assertFalse(any(".broken-" in fn for fn in os.listdir(tmp)))
+
+    def test_v390_easytier(self):
+        import json
+        import tempfile
+        import zipfile
+        from miyu import core, easytier as ET
+        # 1. 跨网邀请口令编码/解码、旧失效节点自动迁移与中文 TOML 渲染
+        code = ET.encode_invite("买了否冷", "Secret99", ["tcp://public.easytier.cn:11010"])
+        self.assertTrue(code.startswith(ET.INVITE_PREFIX))
+        dec = ET.decode_invite(code)
+        self.assertEqual(dec["network_name"], "买了否冷")
+        self.assertEqual(dec["network_secret"], "Secret99")
+        self.assertNotIn("tcp://public.easytier.cn:11010", dec["peers"])
+        self.assertEqual(dec["peers"], ET.DEFAULT_PEERS[:4])
+        self.assertIsNone(ET.decode_invite("invalid-text"))
+        migrated = ET.clean_config({"network_name": "买了否冷", "network_secret": "1234",
+                                    "peers": ["tcp://public.easytier.cn:11010", "tcp://public.easytier.top:11010"]})
+        self.assertEqual(migrated["peers"], ET.DEFAULT_PEERS)
+        toml_txt = ET.render_toml(migrated)
+        self.assertIn('network_name = "买了否冷"', toml_txt)
+        self.assertIn("dhcp = true", toml_txt)
+        # 1b. connector 通道状态解析(JSON 枚举与文本格式)
+        cj = json.dumps([
+            {"url": {"url": "tcp://et.sumnight.top:11010"}, "status": 0},
+            {"url": {"url": "tcp://183.230.36.171:11010"}, "status": 2},
+        ])
+        cs = ET.parse_connectors_output(cj)
+        self.assertEqual([(c["url"], c["status"]) for c in cs], [
+            ("tcp://et.sumnight.top:11010", "Connected"),
+            ("tcp://183.230.36.171:11010", "Connecting"),
+        ])
+        # 2. 解析 easytier-cli JSON 与表格两种输出格式
+        j_out = json.dumps([
+            {"ipv4": "10.126.126.1/24", "hostname": "ME", "cost": "Local", "lat_ms": "-"},
+            {"ipv4": "10.126.126.2/24", "hostname": "FriendPC", "cost": "p2p", "lat_ms": "18.5", "tunnel_proto": "udp"},
+        ])
+        lip, peers = ET.parse_peers_output(j_out)
+        self.assertEqual(lip, "10.126.126.1")
+        self.assertEqual(len(peers), 1)
+        self.assertEqual(peers[0]["ipv4"], "10.126.126.2")
+        self.assertEqual(peers[0]["cost"], "p2p")
+        tbl = (
+            "| ipv4 | hostname | cost | lat_ms | loss_rate |\n"
+            "| 10.126.126.1/24 | ME | Local | - | - |\n"
+            "| 10.126.126.5/24 | Buddy | relay | 62.0 | 0% |\n"
+        )
+        lip2, peers2 = ET.parse_peers_output(tbl)
+        self.assertEqual(lip2, "10.126.126.1")
+        self.assertEqual(peers2[0]["ipv4"], "10.126.126.5")
+        # 3. Zip Slip 安全导入测试
+        with tempfile.TemporaryDirectory() as tmp:
+            zp = os.path.join(tmp, "et.zip")
+            with zipfile.ZipFile(zp, "w") as zf:
+                zf.writestr("../../evil.txt", "nope")
+                zf.writestr(f"easytier-windows-x86_64/{ET.CORE_EXE}", b"MZcore")
+                zf.writestr(f"easytier-windows-x86_64/{ET.CLI_EXE}", b"MZcli")
+                zf.writestr("easytier-windows-x86_64/wintun.dll", b"MZtun")
+            dst = os.path.join(tmp, "et")
+            ok, _msg = ET.import_local_zip(zp, dst)
+            self.assertTrue(ok)
+            self.assertTrue(os.path.isfile(os.path.join(dst, ET.CORE_EXE)))
+            self.assertFalse(os.path.exists(os.path.join(tmp, "evil.txt")))
+        # 4. Core mesh_targets 允许入站与单播发现 + 启动参数构造
+        c = core.Core()
+        c.mesh_targets = {("10.126.126.8", core.DEFAULT_UDP_PORT)}
+        self.assertTrue(c._ip_allowed("10.126.126.8"))
+        mgr = ET.EasyTierManager(".")
+        argv = mgr.build_args("C:/tmp/cfg.toml", 15999)
+        self.assertEqual(argv, ["-c", "C:/tmp/cfg.toml", "--rpc-portal", "127.0.0.1:15999"])
+        # 5. 内置 Uninstall.exe 自动释放与内置 EasyTier 压缩包自动解压
+        from miyu import app as app_mod
+        with tempfile.TemporaryDirectory() as tmp2:
+            if app_mod.bundled_asset("Uninstall.exe"):
+                u_dst = app_mod.sync_uninstaller(tmp2)
+                self.assertTrue(u_dst and os.path.isfile(u_dst))
+                self.assertEqual(app_mod.sync_uninstaller(tmp2), u_dst)
+            if ET.bundled_easytier_zip():
+                et_out = ET.ensure_bundled_easytier(tmp2)
+                self.assertTrue(et_out and os.path.isfile(os.path.join(et_out, ET.CORE_EXE)))
 
 
 if __name__ == "__main__":

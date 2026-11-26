@@ -14,12 +14,14 @@ import hmac
 import json
 import os
 import shutil
+import time
 
 from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 
 from .stickers import default_dir as _stickers_dir, seal, unseal
 
 ACCOUNT_FILE = "p.bin"
+ACCOUNT_BACKUP = "p.bin.bak"          # 3.8.2 自动热备份:防止意外断电/杀软占用导致账户与 dbkey 丢失
 HISTORY_FILE = "h.bin"                # 1.x 的聊天记录(2.0 起改用 msgdb 数据库,这个只用来迁移)
 V1_BACKUP = ".v1bak"
 FAVS_FILE = "f.bin"               # 我的收藏(只要开了记住登录就保存,不受「保存聊天记录」开关影响)
@@ -90,14 +92,19 @@ class AccountStore:
     def has_password(self) -> bool:
         return self.key is not None
 
-    def _outer(self) -> dict | None:
+    def _outer_one(self, name: str) -> dict | None:
+        raw = self._read_raw(self._path(name))
+        if raw is None:
+            return None
         try:
-            with open(self._path(ACCOUNT_FILE), "rb") as f:
-                data = unseal(f.read())
+            data = unseal(raw)
             d = json.loads(data.decode("utf-8")) if data is not None else None
             return d if isinstance(d, dict) else None
         except (OSError, UnicodeDecodeError, ValueError):
             return None
+
+    def _outer(self) -> dict | None:
+        return self._outer_one(ACCOUNT_FILE) or self._outer_one(ACCOUNT_BACKUP)
 
     def is_locked(self) -> bool:
         """账户文件被启动密码加密了,而且本次还没解锁。"""
@@ -147,30 +154,68 @@ class AccountStore:
     def _path(self, name: str) -> str:
         return os.path.join(self.folder, name)
 
-    def _write(self, name: str, obj) -> bool:
+    def _read_raw(self, path: str) -> bytes | None:
+        """读取文件:Windows 上遇到杀软或瞬时占锁自动短暂重试,绝不轻率返回 None。"""
+        for i in range(6):
+            try:
+                with open(path, "rb") as f:
+                    return f.read()
+            except PermissionError:
+                if i == 5:
+                    return None
+                time.sleep(0.04)
+            except OSError:
+                return None
+        return None
+
+    def _replace_safe(self, src: str, dst: str) -> None:
+        for i in range(6):
+            try:
+                os.replace(src, dst)
+                return
+            except PermissionError:
+                if i == 5:
+                    raise
+                time.sleep(0.04)
+
+    def _write(self, name: str, obj, *, aad_name: str | None = None) -> bool:
+        tmp = ""
         try:
             os.makedirs(self.folder, exist_ok=True)
             data = json.dumps(obj, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
             if self.key is not None:               # 设了启动密码:先用密码派生的密钥加密一层,外面再套 DPAPI
                 nonce = os.urandom(12)
-                ct = ChaCha20Poly1305(self.key).encrypt(nonce, data, b"miyu-" + name.encode())
+                ct = ChaCha20Poly1305(self.key).encrypt(nonce, data, b"miyu-" + (aad_name or name).encode())
                 data = json.dumps({"enc": 1, "salt": b64e(self.salt), "ct": b64e(nonce + ct)}).encode("utf-8")
             raw = seal(data)
-            tmp = self._path(name + ".tmp")
+            dst = self._path(name)
+            if name == ACCOUNT_FILE and os.path.exists(dst):
+                # 覆盖主账户前把上一份完好文件保留为 p.bin.bak
+                try:
+                    if os.path.getsize(dst) > 0:
+                        btmp = self._path(f"{ACCOUNT_BACKUP}.{os.getpid()}.tmp")
+                        shutil.copyfile(dst, btmp)
+                        self._replace_safe(btmp, self._path(ACCOUNT_BACKUP))
+                except OSError:
+                    pass
+            tmp = self._path(f"{name}.{os.getpid()}.tmp")
             with open(tmp, "wb") as f:
                 f.write(raw)
                 f.flush()
                 os.fsync(f.fileno())
-            os.replace(tmp, self._path(name))       # 原子替换:写到一半断电也不会损坏旧文件
+            self._replace_safe(tmp, dst)             # 原子替换:写到一半断电也不会损坏旧文件
             return True
         except (OSError, TypeError, ValueError):
+            if tmp and os.path.exists(tmp):
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
             return False
 
-    def _read(self, name: str):
-        try:
-            with open(self._path(name), "rb") as f:
-                raw = f.read()
-        except OSError:
+    def _read(self, name: str, *, aad_name: str | None = None):
+        raw = self._read_raw(self._path(name))
+        if raw is None:
             return None
         data = unseal(raw)
         if data is None:
@@ -184,7 +229,7 @@ class AccountStore:
                 raise Locked()
             try:
                 blob = b64d(d.get("ct"))
-                plain = ChaCha20Poly1305(self.key).decrypt(blob[:12], blob[12:], b"miyu-" + name.encode())
+                plain = ChaCha20Poly1305(self.key).decrypt(blob[:12], blob[12:], b"miyu-" + (aad_name or name).encode())
                 return json.loads(plain.decode("utf-8"))
             except Exception:
                 return None
@@ -192,16 +237,17 @@ class AccountStore:
 
     # ---- 账户
     def has_account(self) -> bool:
-        return os.path.exists(self._path(ACCOUNT_FILE))
+        return os.path.exists(self._path(ACCOUNT_FILE)) or os.path.exists(self._path(ACCOUNT_BACKUP))
 
     def load_account(self) -> dict | None:
-        try:
-            d = self._read(ACCOUNT_FILE)
-        except Locked:
-            return None
-        if not isinstance(d, dict) or len(b64d(d.get("seed"))) != 32:
-            return None
-        return d
+        for fn in (ACCOUNT_FILE, ACCOUNT_BACKUP):
+            try:
+                d = self._read(fn, aad_name=ACCOUNT_FILE)
+            except Locked:
+                return None
+            if isinstance(d, dict) and len(b64d(d.get("seed"))) == 32:
+                return d
+        return None
 
     def save_account(self, d: dict) -> bool:
         d = dict(d)
@@ -276,11 +322,16 @@ class AccountStore:
 
     # ---- 注销
     def wipe(self, stickers: bool = False) -> None:
-        for name in (ACCOUNT_FILE, HISTORY_FILE, FAVS_FILE, BG_FILE, GAMES_FILE, ACCOUNT_FILE + ".tmp", HISTORY_FILE + ".tmp",
-                     FAVS_FILE + ".tmp", BG_FILE + ".tmp", GAMES_FILE + ".tmp", HISTORY_FILE + V1_BACKUP):
+        for name in (ACCOUNT_FILE, ACCOUNT_BACKUP, HISTORY_FILE, FAVS_FILE, BG_FILE, GAMES_FILE,
+                     ACCOUNT_FILE + ".tmp", HISTORY_FILE + ".tmp", FAVS_FILE + ".tmp",
+                     BG_FILE + ".tmp", GAMES_FILE + ".tmp", HISTORY_FILE + V1_BACKUP):
             p = self._path(name)
             if os.path.exists(p):
                 _shred(p)
+        if os.path.isdir(self.folder):
+            for fn in os.listdir(self.folder):
+                if fn.endswith(".tmp"):
+                    _shred(os.path.join(self.folder, fn))
         from .msgdb import remove_files                     # 2.0 的聊天记录数据库(调用前要先关掉)
         remove_files(self.folder)
         out = self._path(OUTBOX)

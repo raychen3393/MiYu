@@ -133,10 +133,24 @@ class RecordsMixin:
             key = os.urandom(32)
         os.makedirs(self.store.folder, exist_ok=True)
         path = self.history_db_path()
-        try:
-            db = MsgDB(path, key)
-        except (WrongKey, sqlite3.Error):
-            # 打不开(账户重建过、文件坏了):挪到一边留着,新建一个
+        db = None
+        for attempt in range(4):
+            try:
+                db = MsgDB(path, key)
+                break
+            except sqlite3.OperationalError as e:
+                msg = str(e).lower()
+                if "locked" in msg or "busy" in msg:
+                    # 3.8.2 数据库暂时被锁:只等待重试,绝不把正常记录改名成 .broken 建空库!
+                    if attempt < 3:
+                        time.sleep(0.25)
+                        continue
+                    return False
+                # 其它严重错误再进入损坏恢复流程
+                err = e
+            except (WrongKey, sqlite3.Error) as e:
+                err = e
+            # 打不开(账户重建过、文件确实损坏):挪到一边留着,新建一个
             stamp = time.strftime("%Y%m%d-%H%M%S")
             for suffix in ("", "-wal", "-shm"):
                 if os.path.exists(path + suffix):
@@ -146,8 +160,11 @@ class RecordsMixin:
                         pass
             try:
                 db = MsgDB(path, key)
+                break
             except sqlite3.Error:
                 return False
+        if db is None:
+            return False
         self.db, self._db_key = db, key
         if fresh:
             self.account["dbkey"] = storage.b64e(key)

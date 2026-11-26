@@ -146,6 +146,9 @@ def build_specs(w) -> list[Spec]:
              options=[("选择图片…", w.choose_avatar), ("用宠物", w.use_pet_avatar), ("恢复默认", lambda: w.set_avatar(None))]),
         Spec("account", "可见性", "在公开大厅中显示我", "关掉后只有同暗号的人能发现你(隐身)", "switch",
              get=lambda: w.act_lobby.isChecked(), set=toggle_act(w.act_lobby), keys="隐身 大厅"),
+        Spec("account", "跨网联机", "🌐 跨网联机（EasyTier 异地组网）", "", "button",
+             get=w.easytier_status_line, action="配置…", set=w.show_easytier_dialog,
+             keys="跨网 异地 组网 easytier 外网 远程 联机 虚拟局域网"),
         Spec("account", "登录", "记住登录", "下次打开直接进入,还是同一个身份", "switch",
              get=lambda: w.act_remember.isChecked(), set=toggle_act(w.act_remember), enabled=has_store,
              keys="自动登录 账户"),
@@ -332,6 +335,8 @@ def build_specs(w) -> list[Spec]:
              keys="清理 占用 便携"),
         Spec("data", "诊断", "诊断信息和出错记录", "启动自检的结果、最近的出错", action="查看…",
              set=w.show_diagnostics, keys="出错 错误 自检"),
+        Spec("data", "卸载", "卸载密语", "启动独立轻量卸载程序（可选保留或彻底清空本地聊天记录与跨网内核）", action="卸载…",
+             set=w.launch_uninstaller, danger=True, close_first=True, keys="卸载 删除 移除 uninstall"),
     ]
 
 

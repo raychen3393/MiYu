@@ -11,7 +11,7 @@ import math
 import random
 import time
 
-from PySide6.QtCore import QPointF, QRect, QRectF, Qt, QTimer
+from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QPolygonF, QRadialGradient, QTextOption
 from PySide6.QtWidgets import QWidget
 

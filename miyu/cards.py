@@ -665,6 +665,60 @@ class _LevelView(QWidget):
         p.end()
 
 
+class GameScoreCard(CardBase):
+    """3.8 游乐厅小游戏战绩挑战卡:展示萌宠头像、游戏名称、最高分/波次,群友可点「不服来战」直接开玩。"""
+    W = 278
+
+    GAME_META = {
+        "td": ("🥕", "萌宠保卫战", "#FF922B", "#FFF4E6"),
+        "pvz": ("🌻", "萌宠大战捣蛋怪", "#40C057", "#EBFBEE"),
+        "merge": ("🍉", "合成大萌宠", "#FA5252", "#FFF5F5"),
+        "snack": ("🐟", "接零食大作战", "#339AF0", "#E7F5FF"),
+        "cloud": ("☁️", "云端跳跳乐", "#7950F2", "#F3F0FF"),
+    }
+
+    def __init__(self, msg, state: dict) -> None:
+        super().__init__(msg)
+        self.lay.setContentsMargins(14, 12, 14, 12)
+        self.lay.setSpacing(8)
+        c = msg.card or {}
+        gk = str(c.get("g") or "merge")
+        ico, title, accent, _tint = self.GAME_META.get(gk, ("🎮", "萌宠小游戏", "#5C7CFA", "#EDF2FF"))
+        score = max(0, int(c.get("s", 0) or 0))
+        detail = str(c.get("d") or "")[:36]
+        pet_name = str(c.get("pn") or "萌宠")[:10]
+        sp = str(c.get("sp") or "cat")
+        lv = max(1, min(100, int(c.get("lv", 1) or 1)))
+        wear = [w for w in (c.get("wear") or []) if isinstance(w, str)][:8]
+
+        head = QHBoxLayout()
+        head.setSpacing(8)
+        from .fun import pet_pixmap
+        pm = pet_pixmap(sp, lv, wear, 62, 42)
+        pic = QLabel()
+        pic.setPixmap(pm)
+        pic.setFixedSize(62, 42)
+        head.addWidget(pic)
+
+        info_col = QVBoxLayout()
+        info_col.setSpacing(1)
+        info_col.addWidget(label(f"{ico} {title}", "cardTitle"))
+        info_col.addWidget(label(f"{pet_name} · Lv.{lv}" + (f" · {detail}" if detail else ""), "fileSub"))
+        head.addLayout(info_col, 1)
+        self.lay.addLayout(head)
+
+        score_lab = label(f"🏆  {score:,} 分", "cardTitle", center=True)
+        score_lab.setStyleSheet(
+            f"font-size: 18px; font-weight: 800; color: {accent}; padding: 4px 8px; "
+            f"border-radius: 10px; background: rgba(128,128,128,0.10);"
+        )
+        self.lay.addWidget(score_lab)
+
+        btn = button("🔥 不服来战", "primary", lambda _=False, k=gk: self.act.emit("challenge", k))
+        btn.setMinimumHeight(32)
+        self.lay.addWidget(btn)
+
+
 def make_card(msg, state: dict) -> CardBase | None:
     c = msg.card or {}
     t = c.get("type")
@@ -682,4 +736,6 @@ def make_card(msg, state: dict) -> CardBase | None:
         return ThrowCard(msg, state)
     if t == "petlv":
         return LevelCard(msg, state)
+    if t == "score":
+        return GameScoreCard(msg, state)
     return None

@@ -2268,7 +2268,8 @@ class SystemTests(unittest.TestCase):
                            capture_output=True)
             self.assertTrue(os.path.exists(os.path.join(tmp, "keys", "key.bin")))
             ns: dict = {}
-            exec(open(pubfile, encoding="utf-8").read(), ns)
+            with open(pubfile, encoding="utf-8") as _pf:
+                exec(_pf.read(), ns)
             pub = bytes.fromhex(ns["RELEASE_PUBKEY"])
             exe = os.path.join(tmp, "MiYu.exe")
             with open(exe, "wb") as f:
@@ -2279,7 +2280,8 @@ class SystemTests(unittest.TestCase):
             subprocess.run([sys.executable, os.path.join(root, "tools", "release.py"), "prepare"], env=env, check=True,
                            capture_output=True)                          # 再打包一次:还是同一把钥匙
             ns2: dict = {}
-            exec(open(pubfile, encoding="utf-8").read(), ns2)
+            with open(pubfile, encoding="utf-8") as _pf2:
+                exec(_pf2.read(), ns2)
             self.assertEqual(ns2["RELEASE_PUBKEY"], ns["RELEASE_PUBKEY"])
         finally:
             if os.path.exists(pubfile):

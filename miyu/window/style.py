@@ -6,7 +6,7 @@ from __future__ import annotations
 from PySide6.QtCore import QStandardPaths, Qt, QTimer
 from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QColorDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QPushButton, QSlider,
+    QApplication, QColorDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QPushButton, QSlider,
     QVBoxLayout, QWidget,
 )
 

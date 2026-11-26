@@ -143,7 +143,7 @@ def clean_file(f) -> dict | None:
 
 
 # 卡片消息(投票、抽签、骰子、游戏邀请、画板邀请)和事件(编辑、戳一戳、公告、走棋、笔迹……)
-CARD_TYPES = {"poll", "draw", "dice", "game", "board"}
+CARD_TYPES = {"poll", "draw", "dice", "game", "board", "score"}
 MAX_CARD_JSON = 16 * 1024
 MAX_EVENT_JSON = 512 * 1024
 ANON_FORWARD_P = 0.67          # 匿名纸条:每一跳有 2/3 的概率再随机转给别人(Crowds 协议)
@@ -639,6 +639,7 @@ class Core:
         self.tcp_port: int | None = None
         self.extra_targets = [tuple(t) for t in (extra_targets or [])]   # 测试用:额外的单播目标
         self.manual_targets: set[tuple[str, int]] = set()
+        self.mesh_targets: set[tuple[str, int]] = set()                  # 3.9 EasyTier 跨网节点单播兜底目标
         self.lobby_enabled = True
         self.rooms: dict[str, Room] = {}
         self.peers: dict[bytes, Peer] = {}
@@ -857,6 +858,19 @@ class Core:
             return False
         self._call(self._add_manual_target, t)
         return True
+
+    def refresh_interfaces(self) -> None:
+        """3.9 立即重扫本机所有网卡(如刚启动的 EasyTier 虚拟网卡)并补发一次广播发现。"""
+        self._call(self._refresh_and_beacon)
+
+    def set_mesh_targets(self, ips: list[str]) -> None:
+        """3.9 同步 EasyTier 在线节点虚拟 IP 列表,就算防火墙拦截广播也能单播秒发现。"""
+        parsed: set[tuple[str, int]] = set()
+        for ip in (ips or [])[:120]:
+            t = parse_target(str(ip))
+            if t is not None:
+                parsed.add(t)
+        self._call(self._set_mesh_targets, parsed)
 
     @staticmethod
     def _extras(extra: dict, reply=None, at=None) -> dict:
@@ -1109,6 +1123,8 @@ class Core:
             self._broadcast(pkt)
             for t in self.manual_targets:
                 self._unicast(pkt, t)
+            for t in self.mesh_targets:
+                self._unicast(pkt, t)
             for t in self.extra_targets:
                 self._unicast(pkt, t)
 
@@ -1222,7 +1238,7 @@ class Core:
             return False
         if ip.startswith("::ffff:"):
             ip = ip[7:]
-        if any(t[0] == ip for t in self.manual_targets):
+        if any(t[0] == ip for t in self.manual_targets) or any(t[0] == ip for t in self.mesh_targets):
             return True
         t = self.beacon_ips.get(ip)
         return t is not None and time.monotonic() - t < 120
@@ -1908,6 +1924,17 @@ class Core:
         self.manual_targets.add(t)
         for _key, ctx in self._contexts():
             self._unicast(self._beacon_for(ctx), t)
+
+    def _refresh_and_beacon(self) -> None:
+        self._refresh_ifaces(emit=True)
+        self._send_beacons()
+
+    def _set_mesh_targets(self, targets: set[tuple[str, int]]) -> None:
+        added = targets - self.mesh_targets
+        self.mesh_targets = {t for t in targets if t[0] not in self.local_ips}
+        if added:
+            self._refresh_ifaces(emit=True)
+            self._send_beacons()
 
     # ------------------------------------------------------------ 定时维护
     async def _maint_loop(self) -> None:

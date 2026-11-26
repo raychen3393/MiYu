@@ -14,15 +14,15 @@ import uuid
 import zipfile
 from collections import deque
 
-from PySide6.QtCore import QPoint, QStandardPaths, QTimer, QUrl, Qt
+from PySide6.QtCore import QPoint, QStandardPaths, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QFileDialog
 
-from .. import imaging, storage, stream, video
+from .. import storage, stream, video
 from ..core import MAX_FILE
 from ..dialogs import info
 from ..player import VideoPlayer, clean_prefs, fmt_ms  # noqa: F401  (fmt_ms 别处还在用)
-from ..ui import VIDEO_EXTS, button, file_ext, label, make_menu, popup
+from ..ui import VIDEO_EXTS, file_ext, make_menu, popup
 from ..widgets import Conv, Msg, VideoCard
 
 PLAY_TMP = "MiYu-play"                # 匿名视频播放时临时解出来的文件(关掉播放器就删)

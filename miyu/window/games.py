@@ -612,6 +612,10 @@ class GamesMixin:
             m.addAction("⚫  五子棋", lambda: self.start_game("gomoku"))
             m.addAction("✊  猜拳", lambda: self.start_game("rps"))
         m.addAction("🎨  一起画", self.start_board)
+        m.addAction("🌐  跨网联机(EasyTier 异地组网)…", self.show_easytier_dialog)
+        m.addAction("🎮  萌宠游乐厅(双塔防 / 5 款小游戏)…", self.show_arcade_hub)
+        m.addAction("🥕  萌宠保卫战(保卫萝卜风塔防)…", self.show_td_game)
+        m.addAction("🌻  萌宠大战捣蛋怪(植物大战僵尸风)…", self.show_pvz_game)
         m.addAction("🏆  五子棋大厅(排行榜对战)…", lambda: self.open_gomoku())
         m.addAction("🦆  谁是坏鸭(多人推理)…", lambda: self.open_duck())
         m.addAction("🕵  谁是卧底(说一句话猜身份)…", lambda: self.open_spy())
@@ -654,17 +658,19 @@ class GamesMixin:
         fun_tiles.append(("⚡", "快捷常用语", "摸鱼一键回复短语", self.open_quick_phrases))
         fun_tiles.append(("🍅", "专注番茄钟", "萌宠伴学 + 喝水提醒", self.show_focus_dialog))
         fun_tiles.append(("⏰", "定时提醒", "喝水/开会倒计时提醒", self.open_reminder_dialog))
+        fun_tiles.append(("🌐", "跨网联机", "EasyTier 异地加密组网", self.show_easytier_dialog))
 
         party_tiles: list[tuple[str, str, str, object]] = [
+            ("🎮", "萌宠游乐厅", "5款2.5D小游戏统一大厅", self.show_arcade_hub),
+            ("🥕", "萌宠保卫战", "保卫萝卜风3图塔防", self.show_td_game),
+            ("🌻", "萌宠大战捣蛋怪", "植物大战僵尸5路草坪", self.show_pvz_game),
+            ("🍉", "合成大萌宠", "3大道具 + COMBO倍率", self.show_merge_game),
             ("🏆", "五子棋大厅", "2.5D 立体棋盘对弈", lambda: self.open_gomoku()),
             ("🦆", "谁是坏鸭", "2.5D 潮玩跑图推理", lambda: self.open_duck()),
             ("🕵", "谁是卧底", "一句话描述找卧底", lambda: self.open_spy()),
         ]
         if conv.kind in ("lobby", "room"):
-            party_tiles.append(("🐾", "宠物等级榜", "看看谁家萌宠最强", lambda c=conv: self.open_pet_rank(c)))
-        party_tiles.append(("🍉", "合成大萌宠", "2.5D 物理合成大西瓜", self.show_merge_game))
-        party_tiles.append(("🎮", "接零食大作战", "2.5D 道具与狂热双倍", self.show_snack_game))
-        party_tiles.append(("☁️", "云端跳跳乐", "2.5D 萌宠蹦云冲高分", self.show_cloud_game))
+            party_tiles.append(("🐾", "宠物等级榜", "双塔防/全游戏局域网榜", lambda c=conv: self.open_pet_rank(c)))
         party_tiles.append(("🎁", "签到与通行证", "每日领限定装扮动作", self.show_pet_pass))
 
         social_tiles: list[tuple[str, str, str, object]] = []
@@ -1112,10 +1118,53 @@ class GamesMixin:
             return self.board_state(m)
         return {"fresh": fresh}
 
+    def share_game_score(self, game_key: str, score: int, detail: str = "") -> bool:
+        """3.8 一键把小游戏战绩以「挑战卡」发送到当前聊天会话,群友点按钮即可直接开战。"""
+        conv = self.current
+        if conv is None or conv.kind == "self" or not self.input.isEnabled():
+            info(self, "无法晒战绩", "请先切到一个可发送消息的群聊或私聊会话再晒战绩哦。")
+            return False
+        g = self.pet_growth
+        meta = {
+            "td": ("🥕", "萌宠保卫战"),
+            "pvz": ("🌻", "萌宠大战捣蛋怪"),
+            "merge": ("🍉", "合成大萌宠"),
+            "snack": ("🐟", "接零食大作战"),
+            "cloud": ("☁️", "云端跳跳乐"),
+        }
+        ico, title = meta.get(game_key, ("🎮", "萌宠小游戏"))
+        card = {
+            "type": "score",
+            "g": game_key,
+            "s": max(0, int(score)),
+            "d": str(detail or "")[:36],
+            "pn": g.name,
+            "sp": getattr(self.pet, "species", "cat"),
+            "lv": g.level,
+            "wear": list(g.wear)[:8],
+        }
+        txt = f"{ico} 我在「{title}」拿了 {int(score):,} 分" + (f"（{detail}）" if detail else "") + "，谁来挑战？"
+        return self._send_card(conv, card, txt) is not None
+
+    def launch_arcade_game(self, game_key: str) -> None:
+        """按游戏键启动对应单人小游戏。"""
+        fn = {
+            "td": getattr(self, "show_td_game", None),
+            "pvz": getattr(self, "show_pvz_game", None),
+            "merge": getattr(self, "show_merge_game", None),
+            "snack": getattr(self, "show_snack_game", None),
+            "cloud": getattr(self, "show_cloud_game", None),
+        }.get(str(game_key))
+        if callable(fn):
+            fn()
+
     def on_card_action(self, m: Msg, action: str, data) -> None:
         t = (m.card or {}).get("type")
         if t == "throw" and action == "replay":
             self.replay_throw(m)
+            return
+        if t == "score" and action == "challenge":
+            self.launch_arcade_game(str(data or (m.card or {}).get("g") or ""))
             return
         if t == "poll" and action == "vote":
             self.vote(m, data)

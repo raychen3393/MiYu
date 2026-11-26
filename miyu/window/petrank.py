@@ -101,7 +101,8 @@ class PetRankMixin:
             self.pr_week = (wk, g.xp)
         card = PR.make_card(self.me.get("id", ""), self.me.get("nick", ""), self.pet.species, g.name, g.xp, wk,
                             self.pr_week[1], list(g.wear), snack_best=g.snack_best, cloud_best=g.cloud_best,
-                            merge_best=getattr(g, "merge_best", 0))
+                            merge_best=getattr(g, "merge_best", 0),
+                            td_best=getattr(g, "td_best", 0), pvz_best=getattr(g, "pvz_best", 0))
         if sign:
             try:
                 card = PR.sign_card(card, self.core.identity)
@@ -268,15 +269,15 @@ class PetRankWindow(Dialog):
         self.w = w
         self.conv: Conv | None = None
         self.setModal(False)
-        self.resize(560, 640)
-        self.setMinimumSize(440, 420)
+        self.resize(650, 640)
+        self.setMinimumSize(520, 420)
         root = QVBoxLayout(self)
         root.setContentsMargins(22, 18, 22, 16)
         root.setSpacing(10)
         self.title = label("", "dialogTitle")
         root.addWidget(self.title)
-        self.tabs = Segmented([("level", "等级榜"), ("week", "本周成长"), ("snack", "接零食"),
-                               ("cloud", "跳跳乐"), ("merge", "合成大萌宠"), ("gpet", "群宠物")])
+        self.tabs = Segmented([("level", "等级"), ("week", "本周"), ("td", "保卫萌宠"), ("pvz", "萌宠大战"),
+                               ("merge", "合成"), ("snack", "接零食"), ("cloud", "跳跳乐"), ("gpet", "群宠")])
         self.tabs.changed.connect(lambda _k: self.refresh(force=True))
         root.addWidget(self.tabs)
         self.rule = label("", "faint", wrap=True)
@@ -315,16 +316,21 @@ class PetRankWindow(Dialog):
             "level": "按宠物等级排,同级比累计经验。每个人的名片都用自己的身份签过名,别人冒充不了、也改不了;"
                      "不在线的人显示最后一次的数据。",
             "week": "按本周(本机时间周一 0:00 起)涨的经验排。每周一重新开始。",
+            "td": "按「🥕 萌宠保卫战(保卫萝卜风)」历史最高分排,看看谁是金牌塔防大师!",
+            "pvz": "按「🌻 萌宠大战捣蛋怪(植物大战僵尸风)」历史最高分排,看看谁的草坪防线最稳!",
             "snack": "按「接零食大作战」历史最高分排,看看谁手速最快!",
             "cloud": "按「2.5D 云端跳跳乐」历史最高分排,看看谁跳得最高!",
             "merge": "按「合成大萌宠」历史最高分排,看看谁合出至臻金豚王!"}[kind]
             + ("  ⚠ = 经验涨得太快,可能用了改过的软件。" if kind in ("level", "week") else ""))
-        sig = (kind, tuple((r["id"], r["lv"], r["xp"], r["gain"], r["sb"], r["cb"], r.get("mb", 0), r["online"], r["nick"], r["sus"]) for r in rows))
+        sig = (kind, tuple((r["id"], r["lv"], r["xp"], r["gain"], r["sb"], r["cb"], r.get("mb", 0),
+                            r.get("tb", 0), r.get("pb", 0), r["online"], r["nick"], r["sus"]) for r in rows))
         if sig != self._sig or force:
             self._sig = sig
             clear_layout(self.list)
             if not rows:
                 empty = {"week": "这周还没有人的宠物长经验。",
+                         "td": "群里还没有「萌宠保卫战」高分记录,快去摆塔守萝卜抢占榜一!",
+                         "pvz": "群里还没有「萌宠大战捣蛋怪」高分记录,快去收阳光布阵抢占榜一!",
                          "snack": "群里还没有「接零食大作战」高分记录,快去开一局抢占榜一!",
                          "cloud": "群里还没有「云端跳跳乐」高分记录,快去起跳抢占榜一!",
                          "merge": "群里还没有「合成大萌宠」高分记录,快去合成至臻金豚王抢占榜一!"}.get(
@@ -335,7 +341,7 @@ class PetRankWindow(Dialog):
             self.list.addStretch(1)
         rank, mine, above = PR.rank_of(rows, self.w.me.get("id", ""))
         if mine is None:
-            self.me_text.setText("你还没上这个榜。" + ("去玩一局就能立刻上榜!" if kind in ("snack", "cloud", "merge") else
+            self.me_text.setText("你还没上这个榜。" + ("去玩一局就能立刻上榜!" if kind in ("td", "pvz", "snack", "cloud", "merge") else
                                                      ("这周多聊聊天、喂喂宠物就能上!" if kind == "week" else "打开宠物就能上榜。")))
         elif above is None:
             self.me_text.setText(f"你排第 {rank} 名,{self._score(mine, kind)} —— 全群第一!" if rank == 1 else
@@ -343,6 +349,10 @@ class PetRankWindow(Dialog):
         else:
             if kind == "week":
                 gap = f"还差 {above['gain'] - mine['gain']:,} 经验"
+            elif kind == "td":
+                gap = f"还差 {above['tb'] - mine['tb']:,} 分"
+            elif kind == "pvz":
+                gap = f"还差 {above['pb'] - mine['pb']:,} 分"
             elif kind == "snack":
                 gap = f"还差 {above['sb'] - mine['sb']:,} 分"
             elif kind == "cloud":
@@ -359,6 +369,10 @@ class PetRankWindow(Dialog):
     def _score(r: dict, kind: str) -> str:
         if kind == "week":
             return f"本周 +{r['gain']:,} 经验"
+        if kind == "td":
+            return f"保卫萌宠 {r.get('tb', 0):,} 分"
+        if kind == "pvz":
+            return f"萌宠大战 {r.get('pb', 0):,} 分"
         if kind == "snack":
             return f"接零食 {r['sb']:,} 分"
         if kind == "cloud":
@@ -420,6 +434,10 @@ class PetRankWindow(Dialog):
         lay.addLayout(col, 1)
         if kind == "week":
             big, small = f"+{r['gain']:,}", f"Lv.{r['lv']}"
+        elif kind == "td":
+            big, small = f"{r.get('tb', 0):,} 分", f"Lv.{r['lv']}"
+        elif kind == "pvz":
+            big, small = f"{r.get('pb', 0):,} 分", f"Lv.{r['lv']}"
         elif kind == "snack":
             big, small = f"{r['sb']:,} 分", f"Lv.{r['lv']}"
         elif kind == "cloud":

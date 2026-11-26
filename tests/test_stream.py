@@ -96,13 +96,13 @@ class ServerTests(unittest.TestCase):
     def test_range_and_wait_for_download(self):
         url = self.srv.add(self.info, "电影.mp4")
         self.assertTrue(url.startswith("http://127.0.0.1:"))
-        r = self.get(url, "bytes=0-1023")
-        self.assertEqual(r.status, 206)
-        self.assertEqual(r.headers["Content-Range"], f"bytes 0-1023/{len(self.data)}")
-        self.assertEqual(r.headers["Content-Type"], "video/mp4")
-        self.assertEqual(r.read(), self.data[:1024])
-        h = self.get(url, method="HEAD")
-        self.assertEqual(int(h.headers["Content-Length"]), len(self.data))
+        with self.get(url, "bytes=0-1023") as r:
+            self.assertEqual(r.status, 206)
+            self.assertEqual(r.headers["Content-Range"], f"bytes 0-1023/{len(self.data)}")
+            self.assertEqual(r.headers["Content-Type"], "video/mp4")
+            self.assertEqual(r.read(), self.data[:1024])
+        with self.get(url, method="HEAD") as h:
+            self.assertEqual(int(h.headers["Content-Length"]), len(self.data))
 
         def grow():                                          # 一边下载一边写,最后改名成正式文件
             for end in (250, 400, 600):
@@ -113,33 +113,39 @@ class ServerTests(unittest.TestCase):
             os.replace(self.part, self.final)
             self.state["s"] = "done"
         threading.Thread(target=grow, daemon=True).start()
-        r = self.get(url, "bytes=200000-")                   # 拖到还没下载到的地方:等数据到了再给
-        body = r.read()
+        with self.get(url, "bytes=200000-") as r:            # 拖到还没下载到的地方:等数据到了再给
+            body = r.read()
         self.assertEqual(body, self.data[200000:])
-        self.assertEqual(self.get(url).read(), self.data)   # 下完以后从正式文件读
+        with self.get(url) as r_all:
+            self.assertEqual(r_all.read(), self.data)        # 下完以后从正式文件读
 
     def test_errors(self):
         url = self.srv.add(self.info)
         with self.assertRaises(urllib.error.HTTPError) as cm:
             self.get(url, f"bytes={len(self.data) + 5}-")
         self.assertEqual(cm.exception.code, 416)
+        cm.exception.close()
         with self.assertRaises(urllib.error.HTTPError) as cm:
             self.get(url.replace(url.split("/")[3], "wrongtoken"))
         self.assertEqual(cm.exception.code, 404)            # 口令不对
+        cm.exception.close()
         self.state["s"] = "fail"
-        with self.assertRaises(urllib.error.HTTPError):
+        with self.assertRaises(urllib.error.HTTPError) as cm:
             self.get(url)
+        cm.exception.close()
         self.state["s"] = "down"
         self.srv.remove(url)
-        with self.assertRaises(urllib.error.HTTPError):
+        with self.assertRaises(urllib.error.HTTPError) as cm:
             self.get(url)
+        cm.exception.close()
 
     def test_suffix_range(self):
         self.state["s"] = "done"
         with open(self.final, "wb") as f:
             f.write(self.data)
         url = self.srv.add(self.info)
-        self.assertEqual(self.get(url, "bytes=-100").read(), self.data[-100:])
+        with self.get(url, "bytes=-100") as r:
+            self.assertEqual(r.read(), self.data[-100:])
 
 
 if __name__ == "__main__":

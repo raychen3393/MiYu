@@ -17,7 +17,7 @@ import random
 import time
 import uuid
 
-from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, QTimer
+from PySide6.QtCore import QPoint, QRectF, Qt, QTimer
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QPushButton, QToolTip
 

@@ -8,7 +8,7 @@ import random
 import re
 import time
 
-from PySide6.QtCore import QEasingCurve, QRectF, QVariantAnimation, Qt
+from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QLinearGradient, QPainter, QTextOption
 from PySide6.QtWidgets import QApplication, QFileDialog, QHBoxLayout, QVBoxLayout, QWidget
 

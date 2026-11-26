@@ -3,6 +3,7 @@
 build/
 dist/
 *.spec
+!MiYu.spec
 __pycache__/
 *.pyc
 
@@ -11,3 +12,7 @@ miyu/_pubkey.py
 *.key
 *.pem
 release_key*
+
+# 打包时内置的二进制附件（由 build.bat 生成）
+assets/Uninstall.exe
+assets/easytier_bundle.zip

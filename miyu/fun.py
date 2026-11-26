@@ -511,6 +511,11 @@ class PetGrowth:
         self.snack_best = _int("snack_best")
         self.cloud_best = _int("cloud_best")
         self.merge_best = _int("merge_best")
+        self.td_best = _int("td_best")
+        self.td_waves = _int("td_waves")
+        self.pvz_best = _int("pvz_best")
+        self.pvz_waves = _int("pvz_waves")
+        self.game_first_day = str(d.get("game_first_day", ""))[:12]
         # 3.7 穿搭预设方案(最多 6 套:槽位 "1"~"6")
         self.presets: dict[str, dict] = {}
         raw_p = d.get("presets")
@@ -949,6 +954,55 @@ class PetGrowth:
         self._check(today)
         return gain, self.level - before
 
+    def claim_daily_game_bonus(self, today: str | None = None) -> bool:
+        """3.8 每日首胜双倍福利:每天第一次完成任意游乐厅小游戏时额外奖励 +30 通行证积分与 +25 经验。"""
+        day = today or time.strftime("%Y-%m-%d")
+        if self.game_first_day == day:
+            return False
+        self.game_first_day = day
+        self.pass_pts += 30
+        self.xp += 25
+        self._check(day)
+        return True
+
+    def record_td_score(self, score: int, waves: int = 0, today: str | None = None) -> tuple[int, int]:
+        """记录「萌宠保卫战(保卫萝卜风)」成绩,返回 (获得经验, 升了几级)。每天上限 300 经验。"""
+        self._roll_day(today)
+        score = max(0, int(score))
+        waves = max(0, int(waves))
+        if score > self.td_best:
+            self.td_best = score
+        if waves > self.td_waves:
+            self.td_waves = waves
+        used = int(self.daily.get("td_xp", 0))
+        gain = min(max(0, 300 - used), max(25, score // 12)) if score > 0 else 0
+        self.daily["td_xp"] = used + gain
+        self.pass_pts += min(40, max(10, score // 45))
+        self.joy = clamp(self.joy + 18)
+        before = self.level
+        self.xp += gain
+        self._check(today)
+        return gain, self.level - before
+
+    def record_pvz_score(self, score: int, waves: int = 0, today: str | None = None) -> tuple[int, int]:
+        """记录「萌宠大战捣蛋怪(植物大战僵尸风)」成绩,返回 (获得经验, 升了几级)。每天上限 300 经验。"""
+        self._roll_day(today)
+        score = max(0, int(score))
+        waves = max(0, int(waves))
+        if score > self.pvz_best:
+            self.pvz_best = score
+        if waves > self.pvz_waves:
+            self.pvz_waves = waves
+        used = int(self.daily.get("pvz_xp", 0))
+        gain = min(max(0, 300 - used), max(25, score // 12)) if score > 0 else 0
+        self.daily["pvz_xp"] = used + gain
+        self.pass_pts += min(40, max(10, score // 45))
+        self.joy = clamp(self.joy + 18)
+        before = self.level
+        self.xp += gain
+        self._check(today)
+        return gain, self.level - before
+
     def save_preset(self, slot: str, name: str = "", species: str = "") -> bool:
         """保存当前装扮、染色、毛色、瞳色、小窝、表情到指定穿搭方案槽位("1"~"6")。"""
         sk = str(slot)
@@ -1063,6 +1117,9 @@ class PetGrowth:
                 "checkin_days": self.checkin_days, "checkin_last": self.checkin_last,
                 "pass_pts": self.pass_pts, "pass_claimed": sorted(self.pass_claimed),
                 "snack_best": self.snack_best, "cloud_best": self.cloud_best, "merge_best": self.merge_best,
+                "td_best": self.td_best, "td_waves": self.td_waves,
+                "pvz_best": self.pvz_best, "pvz_waves": self.pvz_waves,
+                "game_first_day": self.game_first_day,
                 "presets": {k: dict(v) for k, v in self.presets.items()},
                 "aura": self.aura, "material": self.material, "render3d": self.render3d,
                 "custom_lines": list(self.custom_lines), "off_work": self.off_work}

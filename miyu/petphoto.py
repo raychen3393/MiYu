@@ -6,12 +6,11 @@
 """
 from __future__ import annotations
 
-import math
 import time
 
-from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QPoint, QPointF, QRectF, QStandardPaths, Qt
+from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QPointF, QRectF, QStandardPaths, Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap, QTextOption
-from PySide6.QtWidgets import QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout
+from PySide6.QtWidgets import QComboBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
 from .dialogs import Dialog, info
 from .fun import ACC_BY_ID, PetGrowth, SPECIES, TypingPet, star_path

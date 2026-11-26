@@ -25,7 +25,11 @@ if not exist ".venv\Scripts\python.exe" goto nopython
 if errorlevel 1 goto pipfail
 rem 准备发布签名(局域网自动更新用):公钥打包进 exe,私钥留在你的用户目录
 ".venv\Scripts\python.exe" tools\release.py prepare
-".venv\Scripts\python.exe" -m PyInstaller --noconfirm --clean --onefile --windowed --hidden-import concurrent.futures.thread --hidden-import PySide6.QtMultimedia --hidden-import PySide6.QtMultimediaWidgets --name MiYu --icon assets\icon.ico --add-data "assets;assets" main.py
+rem 编译超轻量 Uninstall.exe 并放进 assets（自动内置进 MiYu.exe，局域网更新后也会自动释放）
+if exist "%SystemRoot%\Microsoft.NET\Framework64\v4.0.30319\csc.exe" (
+  "%SystemRoot%\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /utf8output /optimize+ /target:winexe /win32icon:assets\icon.ico /win32manifest:tools\uninstall.manifest /r:System.Windows.Forms.dll /r:System.Drawing.dll /out:assets\Uninstall.exe tools\uninstall.cs
+)
+".venv\Scripts\python.exe" -m PyInstaller --noconfirm --clean MiYu.spec
 if errorlevel 1 goto buildfail
 rem 给 exe 加上发布签名,并确认签完还能正常启动;不行就保留没签名的版本(只是不参与自动更新)
 copy /y "dist\MiYu.exe" "dist\MiYu.signed.exe" >nul
@@ -34,7 +38,9 @@ if errorlevel 1 goto nosign
 start /wait "" "dist\MiYu.signed.exe" --selftest
 if errorlevel 1 goto nosign
 move /y "dist\MiYu.signed.exe" "dist\MiYu.exe" >nul
-echo 已签名，支持局域网自动更新。
+if exist "assets\Uninstall.exe" copy /y "assets\Uninstall.exe" "dist\Uninstall.exe" >nul
+if exist "build" rmdir /s /q "build"
+echo 已签名，支持局域网自动更新，并已内置 Uninstall.exe 与清理 build 临时目录。
 goto done
 :nosign
 del "dist\MiYu.signed.exe" >nul 2>nul

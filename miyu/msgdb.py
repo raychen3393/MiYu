@@ -41,8 +41,9 @@ class MsgDB:
         self._mac = km[32:]
         self.path = path
         new = not os.path.exists(path)
-        self.con = sqlite3.connect(path, isolation_level=None, check_same_thread=False, timeout=5)
+        self.con = sqlite3.connect(path, isolation_level=None, check_same_thread=False, timeout=10)
         c = self.con
+        c.execute("PRAGMA busy_timeout=10000")
         if new:
             c.execute("PRAGMA auto_vacuum=INCREMENTAL")             # 必须在建表之前设
         c.execute("PRAGMA journal_mode=WAL")

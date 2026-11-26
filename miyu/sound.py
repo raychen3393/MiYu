@@ -451,6 +451,146 @@ def fx_pcm(kind: str) -> list[float]:
     return out
 
 
+_GAME_SFX_CACHE: dict[str, list[float]] = {}
+
+
+def game_sfx_pcm(kind: str) -> list[float]:
+    """3.8 小游戏专用合成音效(int16 幅度,直接送入 KeySound 低延迟混音器,零外部音频文件)。"""
+    if kind in _GAME_SFX_CACHE:
+        return _GAME_SFX_CACHE[kind]
+    import random as _r
+    rng = _r.Random((hash(kind) * 31) & 0xFFFF)
+    out: list[float] = []
+    if kind == "pop":                               # 轻快泡泡/吃零食
+        n = int(RATE * 0.085)
+        for i in range(n):
+            t = i / RATE
+            f = 520.0 + 680.0 * (t / 0.085)
+            env = math.sin(math.pi * min(1.0, t / 0.085)) * math.exp(-t * 18)
+            out.append(math.sin(2 * math.pi * f * t) * env)
+    elif kind == "merge":                           # 合成大萌宠清脆果冻叮咚
+        n = int(RATE * 0.16)
+        for i in range(n):
+            t = i / RATE
+            v = math.sin(2 * math.pi * 660.0 * t) * math.exp(-t * 22) * 0.65
+            if t > 0.045:
+                tt = t - 0.045
+                v += math.sin(2 * math.pi * 990.0 * tt) * math.exp(-tt * 18) * 0.75
+            out.append(v)
+    elif kind == "combo":                           # 连击三音上扬和弦
+        n = int(RATE * 0.28)
+        for i in range(n):
+            t = i / RATE
+            v = 0.0
+            for st, freq in ((0.0, 784.0), (0.055, 988.0), (0.11, 1318.5)):
+                if t >= st:
+                    tt = t - st
+                    v += math.sin(2 * math.pi * freq * tt) * math.exp(-tt * 16) * 0.45
+            out.append(v)
+    elif kind == "coin":                            # 阳光/金币清脆双响
+        n = int(RATE * 0.20)
+        for i in range(n):
+            t = i / RATE
+            v = math.sin(2 * math.pi * 1318.5 * t) * math.exp(-t * 28) * 0.55
+            if t > 0.055:
+                tt = t - 0.055
+                v += math.sin(2 * math.pi * 1760.0 * tt) * math.exp(-tt * 18) * 0.75
+            out.append(v)
+    elif kind == "shoot":                           # 炮塔/豌豆发射轻噗声
+        n = int(RATE * 0.07)
+        for i in range(n):
+            t = i / RATE
+            f = 720.0 * math.exp(-t * 26) + 180.0
+            out.append((math.sin(2 * math.pi * f * t) * 0.65 + rng.uniform(-1, 1) * 0.25) * math.exp(-t * 42))
+    elif kind == "freeze":                          # 冰霜企鹅晶莹冰冻声
+        n = int(RATE * 0.19)
+        for i in range(n):
+            t = i / RATE
+            v = (math.sin(2 * math.pi * 1680.0 * t) + 0.5 * math.sin(2 * math.pi * 2520.0 * t)) * math.exp(-t * 16)
+            out.append(v * 0.55)
+    elif kind == "boom":                            # 樱桃炸弹/火焰溅射
+        n = int(RATE * 0.34)
+        lp = 0.0
+        for i in range(n):
+            t = i / RATE
+            lp += (rng.uniform(-1, 1) - lp) * 0.14
+            sub = math.sin(2 * math.pi * (110.0 - t * 140.0) * t) * math.exp(-t * 10) * 0.8
+            out.append(lp * math.exp(-t * 9) * 1.6 + sub)
+    elif kind == "jump":                            # 云端弹簧跳起
+        n = int(RATE * 0.11)
+        for i in range(n):
+            t = i / RATE
+            f = 340.0 + 460.0 * (t / 0.11)
+            out.append(math.sin(2 * math.pi * f * t) * math.exp(-t * 20) * 0.75)
+    elif kind == "boost":                           # 喷气背包/Fever 冲刺
+        n = int(RATE * 0.30)
+        for i in range(n):
+            t = i / RATE
+            f = 440.0 + 880.0 * (t / 0.30)
+            v = math.sin(2 * math.pi * f * t) * 0.55 + rng.uniform(-1, 1) * 0.18
+            out.append(v * math.sin(math.pi * min(1.0, t / 0.30)))
+    elif kind == "hurt":                            # 扣血/踩炸弹低音提醒
+        n = int(RATE * 0.18)
+        for i in range(n):
+            t = i / RATE
+            f = 260.0 - 140.0 * (t / 0.18)
+            out.append((math.sin(2 * math.pi * f * t) + 0.35 * _square(2 * math.pi * f * t)) * math.exp(-t * 15) * 0.6)
+    elif kind == "build":                           # 建塔/升级清脆木块声
+        n = int(RATE * 0.12)
+        for i in range(n):
+            t = i / RATE
+            v = math.sin(2 * math.pi * 540.0 * t) * math.exp(-t * 32) * 0.6
+            if t > 0.04:
+                tt = t - 0.04
+                v += math.sin(2 * math.pi * 810.0 * tt) * math.exp(-tt * 24) * 0.7
+            out.append(v)
+    elif kind == "win":                             # 胜利四音号角
+        n = int(RATE * 0.48)
+        for i in range(n):
+            t = i / RATE
+            v = 0.0
+            for st, freq in ((0.0, 523.25), (0.09, 659.25), (0.18, 783.99), (0.27, 1046.5)):
+                if t >= st:
+                    tt = t - st
+                    v += (math.sin(2 * math.pi * freq * tt) + 0.25 * math.sin(4 * math.pi * freq * tt)) * math.exp(-tt * 9) * 0.45
+            out.append(v)
+    elif kind == "lose":                            # 失败下行三音
+        n = int(RATE * 0.44)
+        for i in range(n):
+            t = i / RATE
+            v = 0.0
+            for st, freq in ((0.0, 440.0), (0.12, 370.0), (0.24, 293.66)):
+                if t >= st:
+                    tt = t - st
+                    v += math.sin(2 * math.pi * freq * tt) * math.exp(-tt * 10) * 0.5
+            out.append(v)
+    else:                                           # click 默认轻点
+        n = int(RATE * 0.045)
+        for i in range(n):
+            t = i / RATE
+            out.append(math.sin(2 * math.pi * 920.0 * t) * math.exp(-t * 60) * 0.6)
+    peak = max((abs(v) for v in out), default=1.0) or 1.0
+    scale = 11500.0 / peak
+    pcm = [v * scale for v in out]
+    _GAME_SFX_CACHE[kind] = pcm
+    return pcm
+
+
+def play_game_sfx(win, kind: str, gain: float = 0.8) -> bool:
+    """播放小游戏合成音效:遵循主窗口声音总开关,使用低延迟混音器且绝不阻塞界面。"""
+    if win is None:
+        return False
+    if not getattr(win, "sound_on", True):
+        return False
+    ks = getattr(win, "keysound", None)
+    if ks is None:
+        return False
+    try:
+        return bool(ks.play_pcm(game_sfx_pcm(kind), gain))
+    except Exception:
+        return False
+
+
 class KeySound:
     """打字音效(默认关闭)。每个按键立即出声,快速连打时声音会叠在一起,不会掐断或丢失。"""
     VARIANTS = 4

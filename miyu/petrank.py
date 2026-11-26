@@ -40,7 +40,8 @@ def level_of(xp: int) -> int:
 
 
 def make_card(pid: str, nick: str, species: str, pet_name: str, xp: int, wk: str, w0: int, wear: list,
-              ts_ms: int | None = None, snack_best: int = 0, cloud_best: int = 0, merge_best: int = 0) -> dict:
+              ts_ms: int | None = None, snack_best: int = 0, cloud_best: int = 0, merge_best: int = 0,
+              td_best: int = 0, pvz_best: int = 0) -> dict:
     xp = max(0, int(xp))
     card = {"v": 1, "id": pid, "n": str(nick)[:24], "sp": species if species in SPECIES else "cat",
             "pn": str(pet_name)[:8], "lv": level_of(xp), "xp": xp, "wk": wk, "w0": max(0, min(int(w0), xp)),
@@ -51,6 +52,10 @@ def make_card(pid: str, nick: str, species: str, pet_name: str, xp: int, wk: str
         card["cb"] = min(100_000, int(cloud_best))
     if merge_best > 0:
         card["mb"] = min(500_000, int(merge_best))
+    if td_best > 0:
+        card["tb"] = min(1_000_000, int(td_best))
+    if pvz_best > 0:
+        card["pb"] = min(1_000_000, int(pvz_best))
     return card
 
 
@@ -93,7 +98,7 @@ def clean_card(raw, now_ms: int | None = None) -> dict | None:
         return None
     card = {"v": 1, "id": pid, "n": n, "sp": sp, "pn": pn, "lv": lv, "xp": xp, "wk": wk, "w0": w0,
             "wear": list(wear), "ts": ts}
-    for gk, cap in (("sb", 100_000), ("cb", 100_000), ("mb", 500_000)):
+    for gk, cap in (("sb", 100_000), ("cb", 100_000), ("mb", 500_000), ("tb", 1_000_000), ("pb", 1_000_000)):
         if gk in raw:
             gv = raw[gk]
             if type(gv) is not int or not (0 <= gv <= cap):
@@ -150,6 +155,7 @@ def standings(cards: dict[str, dict], members, kind: str = "level", wk: str | No
             continue
         gain = week_gain(c, wk)
         sb, cb, mb = int(c.get("sb", 0)), int(c.get("cb", 0)), int(c.get("mb", 0))
+        tb, pb = int(c.get("tb", 0)), int(c.get("pb", 0))
         if kind == "week" and gain <= 0:
             continue
         if kind == "snack" and sb <= 0:
@@ -158,10 +164,14 @@ def standings(cards: dict[str, dict], members, kind: str = "level", wk: str | No
             continue
         if kind == "merge" and mb <= 0:
             continue
+        if kind == "td" and tb <= 0:
+            continue
+        if kind == "pvz" and pb <= 0:
+            continue
         idx, form, _d = form_of(c["lv"])
         rows.append({"id": pid, "nick": c["n"], "pet": c["pn"], "species": c["sp"], "lv": c["lv"], "xp": c["xp"],
-                     "gain": gain, "sb": sb, "cb": cb, "mb": mb, "form": form, "wear": c["wear"], "ts": c["ts"],
-                     "sus": bool(flags.get(pid))})
+                     "gain": gain, "sb": sb, "cb": cb, "mb": mb, "tb": tb, "pb": pb,
+                     "form": form, "wear": c["wear"], "ts": c["ts"], "sus": bool(flags.get(pid))})
     if kind == "week":
         key = lambda r: (-r["gain"], -r["lv"], -r["xp"], r["id"])         # noqa: E731
         score = lambda r: (r["gain"],)                                     # noqa: E731
@@ -174,6 +184,12 @@ def standings(cards: dict[str, dict], members, kind: str = "level", wk: str | No
     elif kind == "merge":
         key = lambda r: (-r["mb"], -r["lv"], r["id"])                      # noqa: E731
         score = lambda r: (r["mb"],)                                       # noqa: E731
+    elif kind == "td":
+        key = lambda r: (-r["tb"], -r["lv"], r["id"])                      # noqa: E731
+        score = lambda r: (r["tb"],)                                       # noqa: E731
+    elif kind == "pvz":
+        key = lambda r: (-r["pb"], -r["lv"], r["id"])                      # noqa: E731
+        score = lambda r: (r["pb"],)                                       # noqa: E731
     else:
         key = lambda r: (-r["lv"], -r["xp"], r["id"])                      # noqa: E731
         score = lambda r: (r["lv"], r["xp"])                               # noqa: E731

@@ -15,7 +15,7 @@ import math
 import random
 import time
 
-from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, QTimer, QVariantAnimation, QEasingCurve
+from PySide6.QtCore import QPoint, QRect, QRectF, Qt, QTimer, QVariantAnimation, QEasingCurve
 from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import QWidget
 

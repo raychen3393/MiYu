@@ -14,7 +14,7 @@ import threading
 import time
 
 from PySide6.QtCore import (
-    QEasingCurve, QEvent, QPoint, QPointF, QPropertyAnimation, QSize, QStandardPaths, QTimer, QUrl, Qt,
+    QEvent, QPoint, QPointF, QSize, QStandardPaths, QTimer, QUrl, Qt,
 )
 from PySide6.QtGui import QAction, QColor, QCursor, QDesktopServices, QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
@@ -180,6 +180,13 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         self.pinned_keys: list[str] = []         # 置顶的会话(按置顶先后)
         self.relaunch = False                    # 注销后重新启动
         self.last_crash = ""                     # 上次闪退的记录(app.py 启动时读出来)
+        self.easytier_cfg: dict = {}             # 3.9 跨网联机(EasyTier)加密持久化配置
+        self.easytier_mgr = None                 # 懒加载 EasyTierManager 实例
+        self._et_poll_busy = False
+        self._et_last_ip = ""
+        self._et_timer = QTimer(self)
+        self._et_timer.setInterval(3000)
+        self._et_timer.timeout.connect(self._poll_easytier)
         self._acct_snapshot = ""
         self._hist_dirty = False
         self._save_tick = 0
@@ -3069,6 +3076,7 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
                                          "退出", danger=True)
         if ok:
             self._force_quit = True
+            self.stop_easytier()
             self.save_account(force=True)
             self.save_history_now(force=True)
             self.close_db()
@@ -3101,6 +3109,8 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
             self.set_compact_side(bool(st.get("compact_side", False)))
         if "members_open" in st:
             self.set_members_open(bool(st.get("members_open", True)))
+        if isinstance(st.get("easytier"), dict):
+            self.easytier_cfg = dict(st["easytier"])
         fun = st.get("fun") if isinstance(st.get("fun"), dict) else {}
         for k in self.fun:
             if k not in fun:
@@ -3143,6 +3153,109 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         offers = self.account.get("offers")
         if isinstance(offers, dict):
             self.core.restore_offers(offers)
+        self.apply_manual_mesh_ips()
+
+    # ------------------------------------------------------------ 3.9 跨网联机(EasyTier)
+    def easytier_status_line(self) -> str:
+        mgr = self.easytier_mgr
+        if mgr is not None and mgr.running:
+            if mgr.state == "connected":
+                return f"🟢 已连接 · {mgr.local_ip} · {len(mgr.peers)} 人在线"
+            if mgr.state == "timeout":
+                return "⚠️ 公共节点连接超时（请点此刷新节点）"
+            if mgr.state == "error":
+                return f"🔴 跨网异常：{mgr.error or '内核已退出'}"
+            return "🟡 正在建立跨网虚拟通道…"
+        return "🔴 未开启（默认纯局域网，点击配置跨网房间）"
+
+    def show_easytier_dialog(self) -> None:
+        from .easytier import EasyTierDialog
+        EasyTierDialog(self).exec()
+
+    def launch_uninstaller(self) -> None:
+        """一键唤起独立轻量 Uninstall.exe（优先软件同目录，自动从内置资源释放）。"""
+        if sys.platform != "win32":
+            info(self, "卸载密语", "当前系统直接删除程序文件即可完成卸载。")
+            return
+        from .app import bundled_asset, sync_uninstaller
+        import shutil
+        import tempfile
+        path = sync_uninstaller()
+        if not path or not os.path.isfile(path):
+            exe_dir = os.path.dirname(os.path.abspath(sys.executable)) if getattr(sys, "frozen", False) else os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            for cand in (os.path.join(exe_dir, "Uninstall.exe"), os.path.join(exe_dir, "dist", "Uninstall.exe")):
+                if os.path.isfile(cand):
+                    path = cand
+                    break
+        if (not path or not os.path.isfile(path)) and bundled_asset("Uninstall.exe"):
+            try:
+                tmp_u = os.path.join(tempfile.gettempdir(), "MiYu_Uninstall.exe")
+                shutil.copy2(bundled_asset("Uninstall.exe"), tmp_u)
+                path = tmp_u
+            except OSError:
+                path = None
+        if not path or not os.path.isfile(path):
+            info(self, "未找到卸载程序", "未找到 Uninstall.exe，直接删除 MiYu.exe 即可完成绿色卸载。", warn=True)
+            return
+        try:
+            import ctypes
+            rc = ctypes.windll.shell32.ShellExecuteW(None, "runas", path, "", os.path.dirname(path), 1)
+            if rc <= 32:
+                info(self, "已取消", "未获得系统管理员授权，已取消启动卸载程序。")
+        except Exception as e:
+            info(self, "启动失败", f"无法启动卸载程序：{e}", warn=True)
+
+    def apply_manual_mesh_ips(self) -> None:
+        mips = (self.easytier_cfg or {}).get("manual_ips") or []
+        for ip in mips[:30]:
+            if isinstance(ip, str) and ip.strip():
+                self.core.add_manual_target(ip.strip())
+
+    def start_easytier(self, cfg: dict) -> tuple[bool, str]:
+        from .easytier import EasyTierManager, clean_config
+        self.easytier_cfg = clean_config(cfg)
+        if self.easytier_mgr is None:
+            folder = self.store.folder if self.store is not None else os.path.expanduser("~")
+            self.easytier_mgr = EasyTierManager(folder)
+        ok, msg = self.easytier_mgr.start(self.easytier_cfg)
+        if ok:
+            self._et_last_ip = ""
+            self._et_timer.start()
+            QTimer.singleShot(900, self._poll_easytier)
+            self.core.refresh_interfaces()
+        return ok, msg
+
+    def stop_easytier(self) -> None:
+        self._et_timer.stop()
+        if self.easytier_mgr is not None:
+            try:
+                self.easytier_mgr.stop()
+            except Exception:
+                pass
+        self._et_last_ip = ""
+        if hasattr(self.core, "set_mesh_targets"):
+            self.core.set_mesh_targets([])
+
+    def _poll_easytier(self) -> None:
+        mgr = self.easytier_mgr
+        if mgr is None or not mgr.running or self._et_poll_busy:
+            return
+        self._et_poll_busy = True
+
+        def _work() -> None:
+            try:
+                _st, lip, peers = mgr.poll_status()
+                ips = [p["ipv4"] for p in peers if p.get("ipv4")]
+                if (ips or lip) and hasattr(self.core, "set_mesh_targets"):
+                    self.core.set_mesh_targets(ips)
+                if lip and lip != self._et_last_ip:
+                    self._et_last_ip = lip
+                    if hasattr(self.core, "refresh_interfaces"):
+                        self.core.refresh_interfaces()
+            finally:
+                self._et_poll_busy = False
+
+        threading.Thread(target=_work, name="miyu-et-poll", daemon=True).start()
 
     def account_dict(self) -> dict:
         rooms = []
@@ -3169,6 +3282,7 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
                 "receipts": self.send_receipts, "typing": self.send_typing_on, "fun": dict(self.fun),
                 "recent_emojis": self.recent_emojis[:24], "title": "" if title == APP_NAME else title,
                 "save_history": self.save_history,
+                **({"easytier": dict(self.easytier_cfg)} if self.easytier_cfg else {}),
                 **self._merged("settings"),
             },
             "verified": sorted(self.verified_ids),
@@ -3252,6 +3366,7 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
             return
         self.remember = False                 # 退出时不要再写账户文件
         self.save_history = False
+        self.stop_easytier()
         self.close_db()
         if self.store is not None:
             self.store.wipe(stickers=dlg.delete_stickers)

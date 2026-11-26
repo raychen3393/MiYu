@@ -16,7 +16,7 @@ import sys
 import time
 
 from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, QTimer
-from PySide6.QtGui import QBrush, QColor, QFont, QGuiApplication, QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient, QTextOption
+from PySide6.QtGui import QBrush, QColor, QFont, QGuiApplication, QLinearGradient, QPainter, QPen, QRadialGradient, QTextOption
 from PySide6.QtWidgets import (
     QFrame, QGridLayout, QHBoxLayout, QLineEdit, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea,
     QStackedWidget, QVBoxLayout, QWidget,
@@ -32,9 +32,6 @@ from ..petcare import (
     EXPRESSIONS, FOOD_BY_ID, FOODS, FORMS, GP_DAILY_FEEDS, GP_MSG_XP, GP_SPECIES, TOY_BY_ID, TOYS, GroupPet,
     form_of, next_form,
 )
-from ..petmerge import MergePetDialog
-from ..petpass import CloudJumpDialog, PassDialog, SnackCatchDialog, can_checkin
-from ..petphoto import PhotoBoothDialog
 from ..theme import T, is_dark
 from ..ui import button, label, make_menu, popup
 from ..widgets import Conv
@@ -263,9 +260,12 @@ class DesktopPet(QWidget):
         lk.setChecked(bool(getattr(self.win, "desktop_locked", False)))
         lk.triggered.connect(self.win.set_desktop_locked)
         m.addSeparator()
+        m.addAction("🎮  萌宠游乐厅（双塔防/全部小游戏）…", lambda: (self.win.restore_from_desktop(), self.win.show_arcade_hub()))
+        m.addAction("🥕  萌宠保卫战（保卫萝卜风）…", lambda: (self.win.restore_from_desktop(), self.win.show_td_game()))
+        m.addAction("🌻  萌宠大战捣蛋怪（植物大战僵尸风）…", lambda: (self.win.restore_from_desktop(), self.win.show_pvz_game()))
         m.addAction("🎁  每日签到与通行证…", lambda: (self.win.restore_from_desktop(), self.win.show_pet_pass()))
         m.addAction("🍉  合成大萌宠…", lambda: (self.win.restore_from_desktop(), self.win.show_merge_game()))
-        m.addAction("🎮  接零食小游戏…", lambda: (self.win.restore_from_desktop(), self.win.show_snack_game()))
+        m.addAction("🐟  接零食小游戏…", lambda: (self.win.restore_from_desktop(), self.win.show_snack_game()))
         m.addAction("☁️  云端跳跳乐…", lambda: (self.win.restore_from_desktop(), self.win.show_cloud_game()))
         m.addAction("🍅  专注番茄钟 / 喝水提醒…", lambda: (self.win.restore_from_desktop(), self.win.show_focus_dialog()))
         m.addAction("📸  萌宠双人合拍大头贴…", lambda: (self.win.restore_from_desktop(), self.win.show_photobooth()))
@@ -628,7 +628,7 @@ class WardrobeDialog(Dialog):
         row = QHBoxLayout()
         row.setSpacing(6)
         row.addWidget(button("🎁 签到/通行证", "", self.win.show_pet_pass, 114))
-        row.addWidget(button("🍉 合成大萌宠", "", self.win.show_merge_game, 108))
+        row.addWidget(button("🎮 萌宠游乐厅", "", self.win.show_arcade_hub, 108))
         row.addWidget(button("📸 合拍大头贴", "", self.win.show_photobooth, 108))
         row.addWidget(button("🎲 随机穿搭", "", self.random_outfit, 96))
         self.filter_btn = QPushButton("仅看已解锁")
@@ -1445,11 +1445,15 @@ class PetLifeMixin:
                 show.addAction(f"🔒 {name}  ·  签到/通行证解锁").setEnabled(False)
         m.addMenu(show)
         m.addSeparator()
+        from ..petpass import can_checkin
         ci_tag = "  🔴 可签到" if can_checkin(g) else ""
+        m.addAction("🎮  萌宠游乐厅（双塔防/全部 5 款）…", self.show_arcade_hub)
+        m.addAction("🥕  萌宠保卫战（保卫萝卜风塔防）…", self.show_td_game)
+        m.addAction("🌻  萌宠大战捣蛋怪（植物大战僵尸风）…", self.show_pvz_game)
         m.addAction(f"🎁  每日签到与萌宠通行证…{ci_tag}", self.show_pet_pass)
-        m.addAction("🍉  合成大萌宠…", self.show_merge_game)
-        m.addAction("🎮  接零食大作战…", self.show_snack_game)
-        m.addAction("☁️  云端跳跳乐…", self.show_cloud_game)
+        m.addAction("🍉  合成大萌宠（含道具/连击）…", self.show_merge_game)
+        m.addAction("🐟  接零食大作战（黄金雨版）…", self.show_snack_game)
+        m.addAction("☁️  云端跳跳乐（喷气背包/变天）…", self.show_cloud_game)
         m.addAction("🍅  专注番茄钟与喝水提醒…", self.show_focus_dialog)
         m.addAction("📸  萌宠双人合拍大头贴…", self.show_photobooth)
         m.addAction("👗  2.5D 潮玩展柜衣橱与穿搭方案…", self.show_wardrobe)
@@ -1669,32 +1673,58 @@ class PetLifeMixin:
         extra = f",进入「{fname}」!" if FORMS[idx][0] == lv and lv > 1 else ""
         self._system(conv, f"🎉 群宠物 {gp.name[0]} 升到 Lv.{lv} 了{extra}")
 
-    # ---------------------------------------------------------------- 桌面陪伴 / 签到与小游戏
+    # ---------------------------------------------------------------- 桌面陪伴 / 签到与小游戏(按需懒加载)
     def show_pet_pass(self) -> None:
+        from ..petpass import PassDialog
         PassDialog(self).exec()
         self.pet.update()
         if self.desktop_win is not None:
             self.desktop_win.update()
 
     def show_snack_game(self) -> None:
+        from ..petpass import SnackCatchDialog
         SnackCatchDialog(self).exec()
         self.pet.update()
         if self.desktop_win is not None:
             self.desktop_win.update()
 
     def show_cloud_game(self) -> None:
+        from ..petpass import CloudJumpDialog
         CloudJumpDialog(self).exec()
         self.pet.update()
         if self.desktop_win is not None:
             self.desktop_win.update()
 
+    def show_arcade_hub(self) -> None:
+        from ..arcade import ArcadeHubDialog
+        ArcadeHubDialog(self).exec()
+        self.pet.update()
+        if self.desktop_win is not None:
+            self.desktop_win.update()
+
+    def show_td_game(self) -> None:
+        from ..pettd import PetTDDialog
+        PetTDDialog(self).exec()
+        self.pet.update()
+        if self.desktop_win is not None:
+            self.desktop_win.update()
+
+    def show_pvz_game(self) -> None:
+        from ..petpvz import PetPvZDialog
+        PetPvZDialog(self).exec()
+        self.pet.update()
+        if self.desktop_win is not None:
+            self.desktop_win.update()
+
     def show_merge_game(self) -> None:
+        from ..petmerge import MergePetDialog
         MergePetDialog(self).exec()
         self.pet.update()
         if self.desktop_win is not None:
             self.desktop_win.update()
 
     def show_photobooth(self, peer_id: str | None = None) -> None:
+        from ..petphoto import PhotoBoothDialog
         PhotoBoothDialog(self, initial_peer_id=peer_id).exec()
 
     def show_focus_dialog(self) -> None:

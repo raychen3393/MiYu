@@ -8,7 +8,7 @@ import random
 import threading
 import time
 
-from PySide6.QtCore import QPoint, QPointF, QRectF, QTimer, Qt
+from PySide6.QtCore import QPointF, QRectF, QTimer, Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap, QRadialGradient, QTextOption
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QScrollArea, QVBoxLayout, QWidget
 
