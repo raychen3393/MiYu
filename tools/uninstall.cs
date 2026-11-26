@@ -125,6 +125,7 @@ namespace MiYuUninstaller
             };
 
             long etBytes = GetDirSize(Path.Combine(_localDataDir, "easytier")) + GetDirSize(Path.Combine(_appDir, "easytier"));
+            foreach (string pf in ProtectedEasyTierDirs()) etBytes += GetDirSize(pf);
             long dataBytes = GetDirSize(_localDataDir) + GetDirSize(_portableDataDir);
 
             _chkApp = new CheckBox
@@ -259,6 +260,8 @@ namespace MiYuUninstaller
                 bool anyEt = false;
                 anyEt |= SafeDeleteDir(Path.Combine(_localDataDir, "easytier"), warns);
                 anyEt |= SafeDeleteDir(Path.Combine(_appDir, "easytier"), warns);
+                // 3.9.4 起内核校验后运行在 C:\Program Files\MiYu-EasyTier(只有管理员能写),卸载程序本身带管理员权限
+                foreach (string pf in ProtectedEasyTierDirs()) anyEt |= SafeDeleteDir(pf, warns);
                 if (anyEt) done.Add("已清理 EasyTier 跨网内核");
             }
 
@@ -366,6 +369,23 @@ namespace MiYuUninstaller
             }
             warns.Add(path);
             return false;
+        }
+
+        private static List<string> ProtectedEasyTierDirs()
+        {
+            List<string> dirs = new List<string>();
+            foreach (Environment.SpecialFolder sf in new Environment.SpecialFolder[] { Environment.SpecialFolder.ProgramFiles, Environment.SpecialFolder.ProgramFilesX86 })
+            {
+                try
+                {
+                    string root = Environment.GetFolderPath(sf);
+                    if (string.IsNullOrEmpty(root)) continue;
+                    string d = Path.Combine(root, "MiYu-EasyTier");
+                    if (!dirs.Contains(d)) dirs.Add(d);
+                }
+                catch { }
+            }
+            return dirs;
         }
 
         private static bool SafeDeleteDir(string dir, List<string> warns)

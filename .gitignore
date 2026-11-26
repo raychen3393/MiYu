@@ -9,6 +9,8 @@ __pycache__/
 
 # 发布签名:公钥由 build.bat 生成,私钥永远不进仓库
 miyu/_pubkey.py
+# 内置 EasyTier 内核指纹白名单:build.bat 打包时由 tools/release.py etpin 根据 assets/easytier_bundle.zip 生成
+miyu/_etpin.py
 *.key
 *.pem
 release_key*

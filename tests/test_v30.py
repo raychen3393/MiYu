@@ -515,6 +515,175 @@ class V30Pet3DAndUIUpgradeTests(unittest.TestCase):
                 et_out = ET.ensure_bundled_easytier(tmp2)
                 self.assertTrue(et_out and os.path.isfile(os.path.join(et_out, ET.CORE_EXE)))
 
+    def test_v394_easytier_guard(self):
+        """3.9.4:EasyTier 内核提权前的 SHA-256 白名单校验、受保护目录启动脚本、官方包下载核对。"""
+        import base64
+        import hashlib
+        import io
+        import sys
+        import tempfile
+        import zipfile
+        from miyu import easytier as ET, etguard as G
+
+        def mkzip(path, files, dup=False):
+            with zipfile.ZipFile(path, "w") as zf:
+                for name, data in files.items():
+                    zf.writestr(f"easytier-windows-x86_64/{name}", data)
+                if dup:
+                    zf.writestr(f"other/{G.CORE}", b"MZevil")
+
+        core_h = hashlib.sha256(b"MZcore").hexdigest()
+        tun_h = hashlib.sha256(b"MZtun").hexdigest()
+        # 1. 白名单清洗:只认 4 个内核文件名 + 64 位十六进制,去重、限量,邀请口令里不带
+        raw = [G.entry(G.CORE, core_h), "EASYTIER-CORE.EXE:" + core_h.upper(), "evil.exe:" + core_h,
+               "wintun.dll:1234", 42, "wintun.dll:" + tun_h]
+        self.assertEqual(G.clean_trusted(raw), [G.entry(G.CORE, core_h), G.entry("wintun.dll", tun_h)])
+        self.assertEqual(G.clean_trusted("nope"), [])
+        self.assertEqual(len(G.clean_trusted([G.entry(G.CORE, f"{i:064x}") for i in range(100)])), G.MAX_TRUSTED)
+        cfg = ET.clean_config({"network_name": "a", "network_secret": "1234", "trusted": raw})
+        self.assertEqual(len(cfg["trusted"]), 2)
+        self.assertNotIn("trusted", ET.decode_invite(ET.encode_invite("a", "1234")))
+        self.assertTrue(G.short(core_h).startswith(core_h[:8].upper()))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            # 2. 压缩包指纹;同名内核出现两次直接拒绝
+            zp = os.path.join(tmp, "et.zip")
+            mkzip(zp, {G.CORE: b"MZcore", "wintun.dll": b"MZtun", "readme.txt": b"x"})
+            self.assertEqual(G.zip_kernel_hashes(zp), {G.CORE: core_h, "wintun.dll": tun_h})
+            dz = os.path.join(tmp, "dup.zip")
+            mkzip(dz, {G.CORE: b"MZcore"}, dup=True)
+            with self.assertRaises(ValueError):
+                G.zip_kernel_hashes(dz)
+            ok, msg = ET.import_local_zip(dz, os.path.join(tmp, "dup"))
+            self.assertFalse(ok)
+            # 3. 目录校验:文件都在白名单里才通过;改一个字节就不通过
+            good = os.path.join(tmp, "good")
+            self.assertTrue(ET.import_local_zip(zp, good)[0])
+            trusted = {n: set() for n in G.KERNEL_FILES}
+            trusted[G.CORE].add(core_h)
+            trusted["wintun.dll"].add(tun_h)
+            ok, hashes, files, bad = G.check_kernel(good, trusted)
+            self.assertTrue(ok, bad)
+            self.assertEqual(set(files), {G.CORE, "wintun.dll"})
+            # 名字和指纹绑定:wintun.dll 的指纹不能拿来冒充 easytier-core.exe
+            swapped = {n: set() for n in G.KERNEL_FILES}
+            swapped[G.CORE].add(tun_h)
+            swapped["wintun.dll"].add(core_h)
+            self.assertFalse(G.check_kernel(good, swapped)[0])
+            badd = os.path.join(tmp, "bad")
+            mkzip(os.path.join(tmp, "bad.zip"), {G.CORE: b"MZcorf", "wintun.dll": b"MZtun"})
+            self.assertTrue(ET.import_local_zip(os.path.join(tmp, "bad.zip"), badd)[0])
+            ok, _h, _f, bad = G.check_kernel(badd, trusted)
+            self.assertFalse(ok)
+            self.assertEqual(bad, [G.CORE])
+            self.assertFalse(G.check_kernel(os.path.join(tmp, "missing"), trusted)[0])
+            # 白名单里没有的多余文件(比如上一版残留的 packet.dll)也不放行;重新导入会清掉残留
+            with open(os.path.join(good, "packet.dll"), "wb") as f:
+                f.write(b"MZold")
+            self.assertFalse(G.check_kernel(good, trusted)[0])
+            self.assertTrue(ET.import_local_zip(zp, good)[0])
+            self.assertFalse(os.path.exists(os.path.join(good, "packet.dll")))
+            self.assertTrue(G.check_kernel(good, trusted)[0])
+            # 4. 压缩包评估:官方原包 / 全在白名单 / 未知
+            self.assertEqual(G.assess_zip(zp, trusted)[0], "pinned")
+            self.assertEqual(G.assess_zip(os.path.join(tmp, "bad.zip"), trusted)[0], "unknown")
+            orig_official = G.OFFICIAL_ZIP_SHA256
+            G.OFFICIAL_ZIP_SHA256 = G.sha256_file(os.path.join(tmp, "bad.zip"))
+            try:
+                self.assertEqual(G.assess_zip(os.path.join(tmp, "bad.zip"), {})[0], "official")
+            finally:
+                G.OFFICIAL_ZIP_SHA256 = orig_official
+            # 5. 查找内核:优先返回校验通过的那个
+            orig_find, orig_bundle = ET.find_easytier_dirs, ET.bundled_easytier_zip
+            ET.find_easytier_dirs = lambda d: [badd, good]
+            ET.bundled_easytier_zip = lambda: None
+            try:
+                self.assertEqual(ET.ensure_bundled_easytier(tmp, trusted), good)
+                self.assertEqual(ET.ensure_bundled_easytier(tmp, {n: set() for n in G.KERNEL_FILES}), badd)
+                # 6. Windows 上内核没通过校验:不提权、不启动,把指纹交给界面去问用户
+                ET.find_easytier_dirs = lambda d: [badd]
+                mgr = ET.EasyTierManager(tmp)
+                orig_plat, orig_pins = sys.platform, G._builtin_cache
+                sys.platform, G._builtin_cache = "win32", {}
+                try:
+                    ok, msg = mgr.start({"network_name": "房间", "network_secret": "12345678"})
+                finally:
+                    sys.platform, G._builtin_cache = orig_plat, orig_pins
+                self.assertFalse(ok)
+                self.assertFalse(mgr.running)
+                self.assertEqual(mgr.state, "untrusted")
+                self.assertIn(G.entry(G.CORE, hashlib.sha256(b"MZcorf").hexdigest()), mgr.pending_trust)
+                self.assertEqual(mgr.pending_dir, badd)
+                self.assertFalse(any(fn.startswith(".launch_") for fn in os.listdir(tmp)))
+            finally:
+                ET.find_easytier_dirs, ET.bundled_easytier_zip = orig_find, orig_bundle
+
+            # 7. 下载:整包指纹不是官方值就丢弃;是官方值才解压并返回指纹
+            payload = open(zp, "rb").read()
+
+            class _Resp(io.BytesIO):
+                headers = {"Content-Length": str(len(payload))}
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *a):
+                    return False
+
+            orig_open = ET.urllib.request.urlopen
+            ET.urllib.request.urlopen = lambda *a, **k: _Resp(payload)
+            try:
+                ok, msg, entries = ET.download_official_easytier(os.path.join(tmp, "dl1"))
+                self.assertFalse(ok)
+                self.assertEqual(entries, [])
+                self.assertFalse(os.path.exists(os.path.join(tmp, "dl1", G.CORE)))
+                G.OFFICIAL_ZIP_SHA256 = hashlib.sha256(payload).hexdigest()
+                ok, msg, entries = ET.download_official_easytier(os.path.join(tmp, "dl2"))
+                self.assertTrue(ok, msg)
+                self.assertIn(G.entry(G.CORE, core_h), entries)
+                self.assertTrue(os.path.isfile(os.path.join(tmp, "dl2", G.CORE)))
+            finally:
+                ET.urllib.request.urlopen = orig_open
+                G.OFFICIAL_ZIP_SHA256 = orig_official
+
+        # 8. 管理员启动脚本:先复制到受保护目录、再校验复制出来的文件、最后才运行;密码不以明文出现
+        hashes = {G.CORE: core_h, "wintun.dll": tun_h}
+        files = {G.CORE: "easytier-core.exe", "wintun.dll": "WinTun.dll"}
+        cfg_bytes = ET.render_toml({"network_name": "买了否冷", "network_secret": "TopSecret99"}).encode("utf-8")
+        script = G.build_launch_script(r"C:\Users\o'neil\AppData\Local\MiYu\easytier", files, hashes,
+                                       nonce="a1b2c3d4e5f6", stop_file=r"C:\Users\x\.stop_a1b2c3d4e5f6",
+                                       parent_pid=4321, cfg_bytes=cfg_bytes, rpc_port=15999)
+        self.assertNotIn("TopSecret99", script)
+        self.assertIn(base64.b64encode(cfg_bytes).decode("ascii"), script)
+        self.assertIn("o''neil", script)                       # 单引号正确转义
+        self.assertIn(f"'WinTun.dll'='{tun_h}'", script)
+        self.assertIn(G.PROTECTED_DIRNAME, script)
+        i_copy, i_hash, i_cfg, i_run = (script.index("Copy-Item"), script.index("Get-FileHash"),
+                                        script.index("WriteAllBytes"), script.index("Start-Process"))
+        self.assertTrue(i_copy < i_hash < i_cfg < i_run)
+        self.assertLess(script.index("/inheritance:r"), i_cfg)  # 先收紧权限再写密码
+        self.assertIn("127.0.0.1:15999", script)
+        self.assertIn("$parentPid = 4321", script)
+        self.assertNotIn("Remove-Item -LiteralPath $stopf", script)  # 管理员进程不碰用户目录里的文件
+        self.assertNotIn("Set-Content -LiteralPath $stopf", script)
+        self.assertEqual(G.kernel_tag(hashes), G.kernel_tag(dict(reversed(list(hashes.items())))))
+        with self.assertRaises(ValueError):
+            G.build_launch_script("C:/x", {"wintun.dll": "wintun.dll"}, {"wintun.dll": tun_h}, nonce="abcdef",
+                                  stop_file="s", parent_pid=1, cfg_bytes=b"", rpc_port=1)
+        with self.assertRaises(ValueError):
+            G.build_launch_script("C:/x", files, hashes, nonce="a'; calc #", stop_file="s",
+                                  parent_pid=1, cfg_bytes=b"", rpc_port=1)
+        # 9. 提权命令:内存里核对脚本哈希后才执行;PowerShell 用绝对路径
+        sb = script.encode("utf-8")
+        cmd = base64.b64decode(G.bootstrap_command(r"C:\tmp\.launch_a1.ps1", sb)).decode("utf-16-le")
+        self.assertIn(hashlib.sha256(sb).hexdigest(), cmd)
+        self.assertIn(r"C:\tmp\.launch_a1.ps1", cmd)
+        self.assertIn("ScriptBlock]::Create", cmd)
+        self.assertIn("-EncodedCommand", G.powershell_args("QQ=="))
+        if sys.platform == "win32":
+            self.assertTrue(os.path.isabs(G.powershell_exe()))
+        self.assertTrue(G.powershell_exe().lower().endswith(os.path.join("windowspowershell", "v1.0", "powershell.exe")))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -6,5 +6,5 @@ if not exist ".venv\Scripts\python.exe" (
     pause
     exit /b 1
 )
-".venv\Scripts\python.exe" -m unittest tests.test_core tests.test_gui_logic tests.test_gomoku tests.test_duck tests.test_spy tests.test_stream -v
+".venv\Scripts\python.exe" -m unittest tests.test_core tests.test_gui_logic tests.test_gomoku tests.test_duck tests.test_spy tests.test_stream tests.test_v30 -v
 pause

@@ -25,6 +25,10 @@ if not exist ".venv\Scripts\python.exe" goto nopython
 if errorlevel 1 goto pipfail
 rem 准备发布签名(局域网自动更新用):公钥打包进 exe,私钥留在你的用户目录
 ".venv\Scripts\python.exe" tools\release.py prepare
+rem 核对内置 EasyTier 内核(assets\easytier_bundle.zip)与官方 v2.6.4 发行包是否一致,并把各文件 SHA-256 写进 miyu\_etpin.py
+rem 跨网联机提权前会按这份白名单校验内核,对不上就拒绝以管理员身份运行
+".venv\Scripts\python.exe" tools\release.py etpin
+if errorlevel 1 goto etpinfail
 rem 编译超轻量 Uninstall.exe 并放进 assets（自动内置进 MiYu.exe，局域网更新后也会自动释放）
 if exist "%SystemRoot%\Microsoft.NET\Framework64\v4.0.30319\csc.exe" (
   "%SystemRoot%\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /utf8output /optimize+ /target:winexe /win32icon:assets\icon.ico /win32manifest:tools\uninstall.manifest /r:System.Windows.Forms.dll /r:System.Drawing.dll /out:assets\Uninstall.exe tools\uninstall.cs
@@ -61,6 +65,11 @@ exit /b 1
 
 :pipfail
 echo 依赖安装失败，请检查网络后重试
+pause
+exit /b 1
+
+:etpinfail
+echo 内置 EasyTier 内核核对没通过(详见上面的提示),为安全起见已停止打包
 pause
 exit /b 1
 

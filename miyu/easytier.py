@@ -1,5 +1,7 @@
 """
 密语 3.9 · 「🌐 跨网联机（EasyTier 异地组网引擎）」
+  · 3.9.4 安全加固：内核逐文件 SHA-256 白名单校验，提权后先复制到只有管理员能写的
+    C:\\Program Files\\MiYu-EasyTier 再校验再运行，启动脚本带哈希防篡改（详见 etguard.py）
   · 默认彻底关闭（保持纯局域网零外网隐私）；用户手动开启后在后台托管开源 EasyTier 内核建立加密虚拟局域网
   · 聊天内容叠加「EasyTier 隧道加密 + 密语端到端加密」双重保护
   · 定时同步 EasyTier 在线成员虚拟 IP 喂给 core.set_mesh_targets() 单播兜底，就算防火墙拦广播也能 100% 秒发现
@@ -29,7 +31,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from .dialogs import Dialog, info
+from . import etguard as G
+from .dialogs import Dialog, ask, info
 from .ui import button, label
 
 INVITE_PREFIX = "MIYU-ET1:"
@@ -60,6 +63,7 @@ def default_config() -> dict:
         "peers": list(DEFAULT_PEERS),
         "manual_ips": [],
         "auto_start": False,
+        "trusted": [],      # 3.9.4:用户明确确认过的内核指纹(不进邀请口令)
     }
 
 
@@ -93,6 +97,7 @@ def clean_config(raw) -> dict:
         "peers": peers,
         "manual_ips": mips,
         "auto_start": bool(raw.get("auto_start", False)),
+        "trusted": G.clean_trusted(raw.get("trusted")),
     }
 
 
@@ -228,21 +233,36 @@ def bundled_easytier_zip() -> str | None:
     return None
 
 
-def ensure_bundled_easytier(data_dir: str) -> str | None:
-    """若本机尚未安装 EasyTier 内核，自动从内置压缩包秒解到数据目录（按需解压、不拖慢启动）。"""
-    existing = find_easytier_dir(data_dir)
-    if existing:
-        return existing
+_bundle_tried: set[str] = set()
+
+
+def ensure_bundled_easytier(data_dir: str, trusted: dict | None = None) -> str | None:
+    """找一个能用的 EasyTier 内核目录,优先返回通过 SHA-256 校验的。
+
+    1. 已有的内核里有校验通过的 → 直接用;
+    2. 都没通过(或还没装),而内置压缩包有白名单 → 把内置包解到数据目录(覆盖旧的),通过就用;
+    3. 实在没有校验通过的 → 返回第一个找到的目录,开启时会弹窗请用户确认要不要信任它。"""
+    if trusted is None:
+        trusted = G.trusted_map()
+    cands = find_easytier_dirs(data_dir)
+    for d in cands:
+        if G.check_kernel(d, trusted, cache=True)[0]:
+            return d
     zp = bundled_easytier_zip()
-    if not zp or not data_dir:
-        return None
-    target = easytier_data_dir(data_dir)
-    ok, _msg = import_local_zip(zp, target)
-    return target if ok and os.path.isfile(os.path.join(target, CORE_EXE)) else None
+    if zp and data_dir:
+        target = easytier_data_dir(data_dir)
+        # 内置包有白名单时,数据目录里的内核没通过校验就用内置包覆盖;没有白名单时只在完全没装时解压一次
+        if (G.builtin_pins() or not cands) and target not in _bundle_tried:
+            _bundle_tried.add(target)
+            ok, _msg = import_local_zip(zp, target)
+            if ok and os.path.isfile(os.path.join(target, CORE_EXE)):
+                if G.check_kernel(target, trusted, cache=True)[0] or not cands:
+                    return target
+    return cands[0] if cands else None
 
 
-def find_easytier_dir(data_dir: str) -> str | None:
-    """按顺序查找 easytier-core: 软件同目录 easytier/ → 数据目录 easytier/ → 系统 PATH。"""
+def find_easytier_dirs(data_dir: str) -> list[str]:
+    """所有装了 easytier-core 的位置: 软件同目录 easytier/ → 数据目录 easytier/ → 系统 PATH。"""
     cands: list[str] = []
     if getattr(sys, "frozen", False):
         cands.append(os.path.join(os.path.dirname(sys.executable), "easytier"))
@@ -250,41 +270,62 @@ def find_easytier_dir(data_dir: str) -> str | None:
         cands.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "easytier"))
     if data_dir:
         cands.append(easytier_data_dir(data_dir))
-    for d in cands:
-        if os.path.isfile(os.path.join(d, CORE_EXE)):
-            return d
     found = shutil.which(CORE_EXE)
     if found:
-        return os.path.dirname(found)
-    return None
+        cands.append(os.path.dirname(found))
+    out: list[str] = []
+    for d in cands:
+        if os.path.isfile(os.path.join(d, CORE_EXE)) and d not in out:
+            out.append(d)
+    return out
+
+
+def find_easytier_dir(data_dir: str) -> str | None:
+    dirs = find_easytier_dirs(data_dir)
+    return dirs[0] if dirs else None
 
 
 def import_local_zip(zip_path: str, target_dir: str) -> tuple[bool, str]:
-    """安全解压官方 easytier-windows-x86_64-*.zip 中的核心文件到 target_dir（防 Zip Slip）。"""
+    """安全解压官方 easytier-windows-x86_64-*.zip 中的核心文件到 target_dir（防 Zip Slip）。
+    只解内核那几个文件；同名文件出现两次视为可疑；目录里上一版残留、这次压缩包没有的内核文件会删掉，
+    免得新旧文件混在一起导致指纹校验对不上。"""
     wanted = {CORE_EXE.lower(), CLI_EXE.lower(), "wintun.dll", "packet.dll"}
     os.makedirs(target_dir, exist_ok=True)
     extracted: list[str] = []
     try:
         with zipfile.ZipFile(zip_path, "r") as zf:
+            members = []
             for info_item in zf.infolist():
                 if info_item.is_dir():
                     continue
                 base = os.path.basename(info_item.filename.replace("\\", "/"))
                 if base.lower() not in wanted:
                     continue
+                if base.lower() in {m[0].lower() for m in members}:
+                    return False, f"压缩包里有两个 {base}，不像官方发行包，已拒绝导入。"
+                members.append((base, info_item))
+            if CORE_EXE.lower() not in {b.lower() for b, _ in members}:
+                return False, f"压缩包里未找到 {CORE_EXE}，请确认选择的是 EasyTier Windows x86_64 发行包。"
+            for base, info_item in members:
                 dst = os.path.join(target_dir, base)
                 with zf.open(info_item, "r") as src, open(dst, "wb") as out:
                     shutil.copyfileobj(src, out)
                 extracted.append(base)
     except Exception as e:
         return False, f"解压失败：{e}"
-    if CORE_EXE.lower() not in {x.lower() for x in extracted}:
-        return False, f"压缩包里未找到 {CORE_EXE}，请确认选择的是 EasyTier Windows x86_64 发行包。"
+    keep = {x.lower() for x in extracted}
+    for low, real in G.kernel_files(target_dir).items():
+        if low not in keep:
+            try:
+                os.remove(os.path.join(target_dir, real))
+            except OSError:
+                pass
     return True, f"已导入 {', '.join(sorted(extracted))}"
 
 
-def download_latest_easytier(target_dir: str, on_progress=None) -> tuple[bool, str]:
-    """从 EasyTier 官方 GitHub Releases 下载最新 Windows x86_64 核心包并安全解压。"""
+def download_official_easytier(target_dir: str, on_progress=None) -> tuple[bool, str, list[str]]:
+    """下载官方 EasyTier 固定版本（etguard.PINNED_VERSION）的 Windows x86_64 包，整包 SHA-256 必须等于 etguard 里写死的官方值才解压。
+    返回 (成功?, 提示, 这个官方包里各文件的指纹)；指纹交给调用方加进白名单。"""
     def _prog(msg: str) -> None:
         if callable(on_progress):
             try:
@@ -292,28 +333,15 @@ def download_latest_easytier(target_dir: str, on_progress=None) -> tuple[bool, s
             except Exception:
                 pass
 
-    hdrs = {"User-Agent": "MiYu-EasyTier-Fetcher", "Accept": "application/vnd.github+json"}
+    tag = f"v{G.PINNED_VERSION}"
+    url = G.OFFICIAL_ZIP_URL
     try:
-        _prog("正在查询 EasyTier 官方最新版本…")
-        rel = json.loads(_http_get_bytes(
-            "https://api.github.com/repos/EasyTier/EasyTier/releases/latest", headers=hdrs, timeout=20.0
-        ).decode("utf-8"))
-        tag = str(rel.get("tag_name") or "latest")
-        asset = None
-        for a in rel.get("assets") or []:
-            nm = str(a.get("name") or "").lower()
-            if "windows-x86_64" in nm and nm.endswith(".zip") and "gui" not in nm:
-                asset = a
-                break
-        if asset is None:
-            return False, "未找到 Windows x86_64 内核压缩包，请点「本地导入」手动选择官网下载的 zip。"
-        url = asset["browser_download_url"]
-        total = int(asset.get("size") or 0)
-        _prog(f"正在下载 EasyTier {tag}（{total / 1048576:.1f} MB）…")
+        _prog(f"正在下载官方 EasyTier {tag}…")
         buf = io.BytesIO()
         try:
             dreq = urllib.request.Request(url, headers={"User-Agent": "MiYu-EasyTier-Fetcher"})
             with urllib.request.urlopen(dreq, timeout=120) as resp:
+                total = int(resp.headers.get("Content-Length") or 0)
                 got = 0
                 while True:
                     chunk = resp.read(65536)
@@ -324,16 +352,23 @@ def download_latest_easytier(target_dir: str, on_progress=None) -> tuple[bool, s
                     if total > 0:
                         _prog(f"正在下载 EasyTier {tag}… {got * 100 // total}% ({got / 1048576:.1f}/{total / 1048576:.1f} MB)")
         except Exception:
-            _prog(f"正在通过备用通道下载 EasyTier {tag}（{total / 1048576:.1f} MB）…")
+            _prog(f"正在通过备用通道下载 EasyTier {tag}…")
             buf = io.BytesIO(_http_get_bytes(url, timeout=120.0))
+        data = buf.getvalue()
+        digest = G.sha256_bytes(data)
+        if digest != G.OFFICIAL_ZIP_SHA256:
+            return False, (f"下载到的压缩包指纹和官方 EasyTier {tag} 不一致（{G.short(digest)}），"
+                           "可能被网络劫持或下载不完整，已丢弃，没有安装。"), []
         os.makedirs(target_dir, exist_ok=True)
         tmp_zip = os.path.join(target_dir, f".dl_{os.getpid()}.zip")
         try:
             with open(tmp_zip, "wb") as f:
-                f.write(buf.getvalue())
-            _prog("下载完成，正在解压内核…")
+                f.write(data)
+            _prog("下载完成，指纹与官方一致，正在解压内核…")
+            members = G.zip_kernel_hashes(tmp_zip)
             ok, msg = import_local_zip(tmp_zip, target_dir)
-            return ok, (f"EasyTier {tag} 安装成功（{msg}）" if ok else msg)
+            entries = [G.entry(n, h) for n, h in members.items()] if ok else []
+            return ok, (f"官方 EasyTier {tag} 安装成功，指纹已核对（{msg}）" if ok else msg), entries
         finally:
             if os.path.exists(tmp_zip):
                 try:
@@ -341,7 +376,8 @@ def download_latest_easytier(target_dir: str, on_progress=None) -> tuple[bool, s
                 except OSError:
                     pass
     except Exception as e:
-        return False, f"自动下载失败（可能是 GitHub 网络超时）：{e}\n可自行下载 easytier-windows-x86_64-*.zip 后点「导入本地压缩包」。"
+        return False, (f"自动下载失败（可能是 GitHub 网络超时）：{e}\n可自行下载 {G.OFFICIAL_ZIP_NAME} "
+                       "后点「本地导入」。"), []
 
 
 def _strip_cidr(val: str) -> str:
@@ -458,12 +494,15 @@ def _pick_free_port() -> int:
 
 
 class EasyTierManager:
-    """后台托管 easytier-core 生命周期，支持 UTF-8 TOML 配置、直启与 Windows 隐藏提权防孤儿看门狗。"""
+    """后台托管 easytier-core 生命周期。
+
+    Windows 上一律走「受保护目录 + 哈希校验」的启动脚本(etguard.build_launch_script):
+    非管理员通过 UAC 提权运行,已经是管理员就直接运行同一份脚本。其它系统不提权,直接启动。"""
 
     def __init__(self, data_dir: str) -> None:
         self.data_dir = data_dir
         self.running = False
-        self.state = "stopped"          # stopped / starting / connected / timeout / error
+        self.state = "stopped"          # stopped / starting / connected / timeout / error / untrusted
         self.error = ""
         self.local_ip = ""
         self.peers: list[dict] = []
@@ -471,37 +510,73 @@ class EasyTierManager:
         self.relay_ok = 0
         self.started_at = 0.0
         self.rpc_port = 15888
+        self.pending_trust: list[str] = []   # 没通过校验、等用户确认的内核指纹
+        self.pending_dir = ""
         self._proc: subprocess.Popen | None = None
         self._stop_file = ""
         self._cfg_file = ""
+        self._launch_file = ""
+        self._nonce = ""
+        self._root = ""
         self._et_dir = ""
         self._lock = threading.Lock()
 
     def build_args(self, cfg_path: str, rpc_port: int) -> list[str]:
         return ["-c", cfg_path, "--rpc-portal", f"127.0.0.1:{rpc_port}"]
 
+    def _cleanup_user_tmp(self, et_tmp_dir: str) -> None:
+        """删掉上次没清理干净的启动脚本 / 配置 / 停止信号(都在用户自己的目录里,由普通权限的密语删)。"""
+        try:
+            for fn in os.listdir(et_tmp_dir):
+                fp = os.path.join(et_tmp_dir, fn)
+                if fn.startswith(".stop_"):
+                    # 停止信号要留一会儿,让上一次的看门狗来得及看到
+                    try:
+                        if time.time() - os.path.getmtime(fp) < 30:
+                            continue
+                    except OSError:
+                        continue
+                if fn.startswith((".launch_", ".cfg_", ".watch_", ".stop_")):
+                    try:
+                        os.remove(fp)
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+
     def start(self, cfg: dict) -> tuple[bool, str]:
         cfg = clean_config(cfg)
+        self.pending_trust = []
+        self.pending_dir = ""
         if not cfg["network_name"]:
             return False, "请先填写「跨网房间名」。"
         if len(cfg["network_secret"]) < 4:
             return False, "为保障安全，请设置至少 4 位的「跨网密码」。"
-        et_dir = ensure_bundled_easytier(self.data_dir)
+        trusted = G.trusted_map(cfg.get("trusted"))
+        et_dir = ensure_bundled_easytier(self.data_dir, trusted)
         if not et_dir:
             return False, "尚未安装 EasyTier 内核，请先点击「一键下载内核」或「导入本地压缩包」。"
 
+        win = sys.platform == "win32"
+        if win:
+            # 启动前重新计算指纹(不用缓存);没通过就交给界面弹窗问用户
+            ok, hashes, files, bad = G.check_kernel(et_dir, trusted, cache=False)
+            if not ok:
+                if G.CORE not in hashes:
+                    return False, f"EasyTier 内核文件读取失败：{et_dir}"
+                self.pending_trust = [G.entry(n, h) for n, h in hashes.items()]
+                self.pending_dir = et_dir
+                self.state = "untrusted"
+                return False, ("EasyTier 内核没有通过安全校验（不是密语内置 / 官方 v"
+                               f"{G.PINNED_VERSION} 的文件：{', '.join(bad)}），为防止被冒充提权，已暂停开启。")
+
         self.stop()
-        self._et_dir = et_dir
         self.rpc_port = _pick_free_port()
-        core_path = os.path.join(et_dir, CORE_EXE)
         et_tmp_dir = easytier_data_dir(self.data_dir)
         os.makedirs(et_tmp_dir, exist_ok=True)
+        self._cleanup_user_tmp(et_tmp_dir)
         nonce = secrets.token_hex(6)
-        cfg_path = os.path.join(et_tmp_dir, f".cfg_{nonce}.toml")
-        with open(cfg_path, "w", encoding="utf-8") as f:
-            f.write(render_toml(cfg))
-        self._cfg_file = cfg_path
-        args = self.build_args(cfg_path, self.rpc_port)
+        self._nonce = nonce
         self.error = ""
         self.local_ip = ""
         self.peers = []
@@ -509,62 +584,53 @@ class EasyTierManager:
         self.relay_ok = 0
 
         try:
-            if sys.platform != "win32" or _is_windows_admin():
-                flags = 0x08000000 if sys.platform == "win32" else 0  # CREATE_NO_WINDOW
+            if not win:
+                # 非 Windows 不提权,直接以当前用户身份启动
+                self._et_dir = et_dir
+                cfg_path = os.path.join(et_tmp_dir, f".cfg_{nonce}.toml")
+                with open(cfg_path, "w", encoding="utf-8") as f:
+                    f.write(render_toml(cfg))
+                try:
+                    os.chmod(cfg_path, 0o600)
+                except OSError:
+                    pass
+                self._cfg_file = cfg_path
                 self._proc = subprocess.Popen(
-                    [core_path, *args],
-                    cwd=et_dir,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    creationflags=flags,
+                    [os.path.join(et_dir, CORE_EXE), *self.build_args(cfg_path, self.rpc_port)],
+                    cwd=et_dir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 )
             else:
-                # 非管理员 Windows:通过 UAC 启动隐藏看门狗(UTF-8 BOM),监听 stop 文件或主进程退出自动清理内核与临时配置
+                self._root = G.protected_root()
+                self._et_dir = os.path.join(self._root, G.kernel_tag(hashes))
                 self._stop_file = os.path.join(et_tmp_dir, f".stop_{nonce}")
-                ps_path = os.path.join(et_tmp_dir, f".watch_{nonce}.ps1")
-                if os.path.exists(self._stop_file):
-                    os.remove(self._stop_file)
-                arg_list_ps = ", ".join("'" + a.replace("'", "''") + "'" for a in args)
-                ps_script = (
-                    "$ErrorActionPreference='SilentlyContinue'\n"
-                    f"$core = '{core_path.replace(chr(39), chr(39)*2)}'\n"
-                    f"$wd = '{et_dir.replace(chr(39), chr(39)*2)}'\n"
-                    f"$stopf = '{self._stop_file.replace(chr(39), chr(39)*2)}'\n"
-                    f"$cfgf = '{cfg_path.replace(chr(39), chr(39)*2)}'\n"
-                    f"$selfps = '{ps_path.replace(chr(39), chr(39)*2)}'\n"
-                    f"$parentPid = {os.getpid()}\n"
-                    f"$p = Start-Process -FilePath $core -ArgumentList @({arg_list_ps}) -WorkingDirectory $wd -WindowStyle Hidden -PassThru\n"
-                    "while ($p -and -not $p.HasExited) {\n"
-                    "  if (Test-Path $stopf) { break }\n"
-                    "  if (-not (Get-Process -Id $parentPid -ErrorAction SilentlyContinue)) { break }\n"
-                    "  Start-Sleep -Milliseconds 400\n"
-                    "}\n"
-                    "if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force }\n"
-                    "Remove-Item $stopf,$cfgf,$selfps -Force -ErrorAction SilentlyContinue\n"
-                )
-                with open(ps_path, "w", encoding="utf-8-sig") as f:
-                    f.write(ps_script)
-                import ctypes
-                rc = ctypes.windll.shell32.ShellExecuteW(
-                    None, "runas", "powershell.exe",
-                    f'-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{ps_path}"',
-                    et_dir, 0,
-                )
-                if rc <= 32:
-                    for fp in (ps_path, cfg_path):
-                        try:
-                            os.remove(fp)
-                        except OSError:
-                            pass
-                    self._stop_file = ""
-                    self._cfg_file = ""
-                    return False, "已取消 Windows 管理员授权，未开启跨网联机。"
+                script = G.build_launch_script(
+                    et_dir, files, hashes, nonce=nonce, stop_file=self._stop_file,
+                    parent_pid=os.getpid(), cfg_bytes=render_toml(cfg).encode("utf-8"), rpc_port=self.rpc_port,
+                ).encode("utf-8")
+                self._launch_file = os.path.join(et_tmp_dir, f".launch_{nonce}.ps1")
+                with open(self._launch_file, "wb") as f:
+                    f.write(script)
+                params = G.powershell_args(G.bootstrap_command(self._launch_file, script))
+                ps_exe = G.powershell_exe()           # 绝对路径,工作目录也用 System32,防同名程序劫持
+                if _is_windows_admin():
+                    self._proc = subprocess.Popen(
+                        f'"{ps_exe}" {params}', cwd=G.system_dir(),
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=0x08000000,
+                    )
+                else:
+                    import ctypes
+                    rc = ctypes.windll.shell32.ShellExecuteW(None, "runas", ps_exe, params, G.system_dir(), 0)
+                    if rc <= 32:
+                        self._remove_launch_file()
+                        self._stop_file = ""
+                        return False, "已取消 Windows 管理员授权，未开启跨网联机。"
             self.running = True
             self.state = "starting"
             self.started_at = time.monotonic()
-            return True, "正在启动跨网虚拟通道并连接公共节点…"
+            return True, "正在校验内核并启动跨网虚拟通道…"
         except Exception as e:
             self._remove_cfg_file()
+            self._remove_launch_file()
             self.state = "error"
             self.error = str(e)
             return False, f"启动失败：{e}"
@@ -578,26 +644,50 @@ class EasyTierManager:
                 pass
             self._cfg_file = ""
 
+    def _remove_launch_file(self) -> None:
+        """启动脚本里有跨网密码(base64),内核跑起来或停止后就删掉。"""
+        if self._launch_file:
+            try:
+                if os.path.exists(self._launch_file):
+                    os.remove(self._launch_file)
+            except OSError:
+                pass
+            self._launch_file = ""
+
     def stop(self) -> None:
+        if self._stop_file:
+            # Windows:通知管理员看门狗停掉内核(它每 0.4 秒看一次这个文件)
+            try:
+                with open(self._stop_file, "w", encoding="utf-8") as f:
+                    f.write("stop")
+            except OSError:
+                pass
         if self._proc is not None:
             try:
-                self._proc.terminate()
-                self._proc.wait(timeout=2.0)
+                if self._stop_file:
+                    self._proc.wait(timeout=3.0)      # 看门狗自己会收尾,别直接杀它,否则内核会变孤儿
+                else:
+                    self._proc.terminate()
+                    self._proc.wait(timeout=2.0)
             except Exception:
                 try:
                     self._proc.kill()
                 except Exception:
                     pass
             self._proc = None
-            self._remove_cfg_file()
+        self._remove_cfg_file()
+        self._remove_launch_file()
         if self._stop_file:
-            try:
-                with open(self._stop_file, "w", encoding="utf-8") as f:
-                    f.write("stop")
-            except OSError:
-                pass
+            stop_file = self._stop_file
             self._stop_file = ""
-            self._cfg_file = ""
+            # 留几秒让看门狗看到信号,再由普通权限的密语自己删掉
+            def _later() -> None:
+                time.sleep(4.0)
+                try:
+                    os.remove(stop_file)
+                except OSError:
+                    pass
+            threading.Thread(target=_later, name="miyu-et-stopclean", daemon=True).start()
         self.running = False
         self.state = "stopped"
         self.local_ip = ""
@@ -622,10 +712,31 @@ class EasyTierManager:
         """通过 easytier-cli 查询实时本机虚拟 IP、公共节点连通状态与在线好友列表。"""
         if not self.running:
             return "stopped", "", []
+        if self._root and self._nonce:
+            st = G.read_status(self._root, self._nonce)
+            if st == "running":
+                self._remove_launch_file()
+            elif st and st != "running":
+                kind, _, detail = st.partition(":")
+                self.running = False
+                self.state = "error"
+                self._remove_launch_file()
+                if kind == "hash":
+                    self.error = G.STATUS_TEXT["hash"] + (f"（{detail}）" if detail else "")
+                elif kind == "exit":
+                    self.error = f"{G.STATUS_TEXT['exit']}（代码 {detail or '?'}）"
+                else:
+                    self.error = f"{G.STATUS_TEXT['start']}：{detail or st}"
+                return self.state, "", []
         if self._proc is not None and self._proc.poll() is not None:
+            code = self._proc.returncode
             self.running = False
             self.state = "error"
-            self.error = f"EasyTier 内核已退出（代码 {self._proc.returncode}）"
+            self._remove_launch_file()
+            if code == 9:
+                self.error = "启动脚本校验失败（文件被改动或已被删除），已拒绝运行，请重新开启。"
+            else:
+                self.error = f"EasyTier 内核已退出（代码 {code}）"
             return self.state, "", []
         cli_path = os.path.join(self._et_dir, CLI_EXE) if self._et_dir else ""
         if not cli_path or not os.path.isfile(cli_path):
@@ -654,7 +765,7 @@ class EasyTierManager:
 
 class EasyTierDialog(Dialog):
     """「🌐 跨网联机（EasyTier 异地组网）」配置与实时监控窗口。"""
-    _dl_done = Signal(bool, str)
+    _dl_done = Signal(bool, str, object)
     _dl_prog = Signal(str)
     _nodes_done = Signal(bool, object, str)
 
@@ -780,6 +891,28 @@ class EasyTierDialog(Dialog):
         st = getattr(self.win, "store", None)
         return st.folder if st is not None else os.path.expanduser("~")
 
+    def _trusted_list(self) -> list[str]:
+        return G.clean_trusted((getattr(self.win, "easytier_cfg", None) or {}).get("trusted"))
+
+    def _add_trusted(self, entries) -> None:
+        """把确认可信的内核指纹加进白名单并立即加密保存。"""
+        cfg = dict(getattr(self.win, "easytier_cfg", None) or {})
+        cfg["trusted"] = G.merge_trusted(cfg.get("trusted"), entries)
+        self.win.easytier_cfg = clean_config(cfg)
+        if hasattr(self.win, "save_account"):
+            self.win.save_account(force=True)
+
+    def _confirm_untrusted(self, entries: list[str], where: str) -> bool:
+        core_h = next((e.rpartition(":")[2] for e in entries if e.startswith(G.CORE + ":")), "")
+        return ask(
+            self, "这个 EasyTier 内核没有通过校验",
+            f"{where}的 EasyTier 内核不是密语内置的版本，也不是官方 v{G.PINNED_VERSION} 发行包里的文件。\n\n"
+            f"easytier-core.exe 指纹：{G.short(core_h)}\n\n"
+            "开启跨网联机时它会以「管理员权限」运行。如果它是别人冒充的程序，就能完全控制这台电脑。\n"
+            "只有在你确定它来自 EasyTier 官方（github.com/EasyTier/EasyTier）时才继续。",
+            yes="我确认来源可信", no="取消", danger=True,
+        )
+
     def _collect_cfg(self) -> dict:
         peers = [ln.strip() for ln in self.peers_edit.toPlainText().splitlines() if "://" in ln.strip()]
         mips = [ln.strip() for ln in self.manual_edit.toPlainText().splitlines() if ln.strip()]
@@ -788,6 +921,7 @@ class EasyTierDialog(Dialog):
             "network_secret": self.sec_edit.text().strip(),
             "peers": peers or list(DEFAULT_PEERS),
             "manual_ips": mips,
+            "trusted": self._trusted_list(),
         })
 
     def _apply_cfg(self) -> dict:
@@ -832,17 +966,19 @@ class EasyTierDialog(Dialog):
         target = easytier_data_dir(self._data_dir())
 
         def _worker() -> None:
-            ok, msg = download_latest_easytier(target, on_progress=self._dl_prog.emit)
-            self._dl_done.emit(ok, msg)
+            ok, msg, entries = download_official_easytier(target, on_progress=self._dl_prog.emit)
+            self._dl_done.emit(ok, msg, entries)
 
         threading.Thread(target=_worker, name="miyu-et-dl", daemon=True).start()
 
     def _on_dl_prog(self, msg: str) -> None:
         self.bin_lab.setText(msg)
 
-    def _on_dl_done(self, ok: bool, msg: str) -> None:
+    def _on_dl_done(self, ok: bool, msg: str, entries=None) -> None:
         self.dl_btn.setEnabled(True)
         self.imp_btn.setEnabled(True)
+        if ok and entries:
+            self._add_trusted(entries)      # 整包指纹等于官方值,里面的文件自动可信
         self.tip_lab.setText(("✅ " if ok else "⚠️ ") + msg)
         self.refresh()
 
@@ -869,7 +1005,23 @@ class EasyTierDialog(Dialog):
         )
         if not path:
             return
+        try:
+            status, _zsha, members = G.assess_zip(path, G.trusted_map(self._trusted_list()))
+        except Exception as e:
+            self.tip_lab.setText(f"⚠️ 压缩包读取失败：{e}")
+            return
+        if G.CORE not in members:
+            self.tip_lab.setText(f"⚠️ 压缩包里未找到 {CORE_EXE}，请确认选择的是 EasyTier Windows x86_64 发行包。")
+            return
+        entries = [G.entry(n, h) for n, h in members.items()]
+        if status == "unknown" and not self._confirm_untrusted(entries, "你选择的压缩包里"):
+            self.tip_lab.setText("已取消导入：未经校验的内核不会被安装。")
+            return
         ok, msg = import_local_zip(path, easytier_data_dir(self._data_dir()))
+        if ok and status != "pinned":
+            self._add_trusted(entries)
+        if ok:
+            msg += {"official": "，指纹与官方发行包一致", "pinned": "，指纹与内置版本一致"}.get(status, "，已按你的确认加入信任列表")
         self.tip_lab.setText(("✅ " if ok else "⚠️ ") + msg)
         self.refresh()
 
@@ -881,17 +1033,31 @@ class EasyTierDialog(Dialog):
         else:
             cfg = self._apply_cfg()
             ok, msg = self.win.start_easytier(cfg)
+            mgr = getattr(self.win, "easytier_mgr", None)
+            pending = list(getattr(mgr, "pending_trust", None) or []) if not ok else []
+            if pending:
+                where = f"「{getattr(mgr, 'pending_dir', '') or '本机'}」里"
+                if self._confirm_untrusted(pending, where):
+                    self._add_trusted(pending)
+                    ok, msg = self.win.start_easytier(self._apply_cfg())
+                else:
+                    msg = "已取消：未经校验的 EasyTier 内核不会以管理员权限运行。可点「一键下载内核」获取官方校验版。"
             self.tip_lab.setText(("🚀 " if ok else "⚠️ ") + msg)
-            if not ok and "内核" in msg:
+            if not ok and not pending and "尚未安装" in msg:
                 info(self, "需要 EasyTier 内核", msg)
         self.refresh()
 
     def refresh(self) -> None:
-        et_dir = ensure_bundled_easytier(self._data_dir())
-        if et_dir:
-            tag = "内置自带 · 已就绪" if bundled_easytier_zip() else os.path.basename(et_dir)
-            self.bin_lab.setText(f"✅ EasyTier 内核已就绪（{tag}）")
-            self.dl_btn.setText("🔄 更新内核")
+        trusted = G.trusted_map(self._trusted_list())
+        et_dir = ensure_bundled_easytier(self._data_dir(), trusted)
+        if et_dir and G.check_kernel(et_dir, trusted, cache=True)[0]:
+            tag = "内置自带" if bundled_easytier_zip() else os.path.basename(et_dir)
+            self.bin_lab.setText(f"✅ EasyTier 内核已就绪（{tag} · 🔒 指纹已校验）")
+            self.dl_btn.setText("🔄 重新下载内核")
+        elif et_dir:
+            self.bin_lab.setText("⚠️ 找到的 EasyTier 内核没有通过指纹校验，开启时需要你确认；"
+                                 f"建议点「一键下载内核」换成官方 v{G.PINNED_VERSION} 校验版。")
+            self.dl_btn.setText("⬇ 一键下载内核")
         else:
             self.bin_lab.setText("⬇️ 尚未安装 EasyTier 内核（约 10 MB，仅需安装一次）")
             self.dl_btn.setText("⬇ 一键下载内核")
@@ -902,6 +1068,10 @@ class EasyTierDialog(Dialog):
         if mgr is None or not mgr.running:
             self.state_lab.setText("🔴 未开启（纯局域网）")
             self.toggle_btn.setText("🌐 开启跨网联机")
+            if mgr is not None and mgr.state == "error" and mgr.error:
+                # 内核校验失败 / 退出后 running 已经是 False,把原因显示一次
+                self.tip_lab.setText("⚠️ " + mgr.error)
+                mgr.state = "stopped"
         elif mgr.state == "connected":
             self.state_lab.setText(f"🟢 已连入 {mgr.local_ip} · {len(mgr.peers)} 位好友")
             self.toggle_btn.setText("⏹ 断开跨网")

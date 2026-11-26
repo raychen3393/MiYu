@@ -38,6 +38,8 @@ a = Analysis(
         "miyu.petpass",
         "miyu.petphoto",
         "miyu.easytier",
+        "miyu.etguard",
+        "miyu._etpin",      # 打包时由 tools/release.py etpin 生成的内置 EasyTier 内核指纹白名单
     ],
     hookspath=[],
     hooksconfig={},

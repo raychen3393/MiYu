@@ -121,6 +121,21 @@ def _sound():
     return "ok", "提示音可用"
 
 
+def _easytier_pins():
+    """3.9.4:内置的 EasyTier 内核必须带指纹白名单,否则跨网联机会因校验不过而要用户手动确认。
+    打包时 --selftest 发现这项 fail 就不签名,避免发出去一个缺白名单的版本。"""
+    from . import etguard as G
+    zp = G._bundled_zip()
+    if not zp:
+        return "info", "没有内置 EasyTier 内核,开启跨网联机时可一键下载官方校验版"
+    pins = G.builtin_pins()
+    if not pins:
+        return "fail", "内置了 EasyTier 内核,但缺少指纹白名单 miyu/_etpin.py(打包时应运行 tools/release.py etpin)"
+    if G.zip_kernel_hashes(zp) != pins:
+        return "fail", "内置 EasyTier 内核和指纹白名单对不上,请重新打包"
+    return "ok", f"内置 EasyTier v{G.PINNED_VERSION} 内核指纹已校验({len(pins)} 个文件)"
+
+
 def run_checks(core=None, store=None, network: bool = True) -> list:
     """跑一遍自检。core / store 为空时跳过对应的项目。"""
     results: list = []
@@ -133,6 +148,7 @@ def run_checks(core=None, store=None, network: bool = True) -> list:
         _check(results, "网络", lambda: _network(core))
     _check(results, "视频", _video_safe)
     _check(results, "声音", _sound)
+    _check(results, "跨网内核校验", _easytier_pins)
     return results
 
 
