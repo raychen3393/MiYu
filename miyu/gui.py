@@ -43,7 +43,7 @@ from .ui import (
 )
 from .widgets import (
     Bubble, ChatInput, ChatPanel, ClickFrame, Conv, ConvDelegate, EmojiPanel, MemberDelegate, Msg, MsgArea,
-    SearchEdit, TimeSep, Wallpaper,
+    PeerHoverCard, SearchEdit, StickyDatePill, TimeSep, Wallpaper,
 )
 from .window.chat import ChatMixin
 from .window.duck import DuckMixin
@@ -271,8 +271,8 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         self.duck_btn = tool("duck", 32, "round", "派对游戏:谁是坏鸭、谁是卧底(4~10 人联机)")
         self.duck_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         party = make_menu(self)
-        party.addAction("🦆  谁是坏鸭(地图上跑动的推理游戏)", lambda: self.open_duck())
-        party.addAction("🕵  谁是卧底(说一句话猜身份)", lambda: self.open_spy())
+        self._menu_icon(party.addAction("谁是坏鸭(地图上跑动的推理游戏)", lambda: self.open_duck()), "duck")
+        self._menu_icon(party.addAction("谁是卧底(说一句话猜身份)", lambda: self.open_spy()), "user")
         self.duck_btn.setMenu(party)
         head.addWidget(self.duck_btn)
         self.theme_btn = tool("", 32, "round", "外观")
@@ -406,23 +406,23 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         self.act_history.triggered.connect(self.toggle_history)
         m.addAction(self.act_history)
         self._menu_icon(m.addAction("启动密码…", lambda: self.set_password_dialog()), "lock")
-        m.addAction("📈  聊天年报…", lambda: self.show_report())
+        self._menu_icon(m.addAction("聊天年报…", lambda: self.show_report()), "trophy")
         self.act_privacy = QAction("防偷看模式(离开窗口时模糊聊天内容)", self)
         self.act_privacy.setCheckable(True)
         self.act_privacy.setChecked(True)
         self.act_privacy.triggered.connect(lambda on: self.set_privacy(on))
         m.addAction(self.act_privacy)
         self.avatar_menu_host = m
-        m.addAction("🖼  选择头像图片…", lambda: self.choose_avatar())
-        m.addAction("🐾  用宠物当头像", lambda: self.use_pet_avatar())
-        m.addAction("↩  恢复默认头像", lambda: self.set_avatar(None))
+        self._menu_icon(m.addAction("选择头像图片…", lambda: self.choose_avatar()), "image")
+        self._menu_icon(m.addAction("用宠物当头像", lambda: self.use_pet_avatar()), "paw")
+        self._menu_icon(m.addAction("恢复默认头像", lambda: self.set_avatar(None)), "refresh")
         m.addSeparator()
         self.update_menu = make_menu(m)
         self.update_menu.setTitle("软件更新")
         self.update_menu.aboutToShow.connect(lambda: self._fill_update_menu())
         m.addMenu(self.update_menu)
-        m.addAction("🗂  数据管理(位置、占用、一键清理)…", lambda: self.show_data())
-        m.addAction("🩺  诊断信息和出错记录…", lambda: self.show_diagnostics())
+        self._menu_icon(m.addAction("数据管理(位置、占用、一键清理)…", lambda: self.show_data()), "folder")
+        self._menu_icon(m.addAction("诊断信息和出错记录…", lambda: self.show_diagnostics()), "info")
         m.addSeparator()
         self._menu_icon(m.addAction("隐藏窗口\tCtrl+Alt+H", self.hide_window), "eye_off")
         self._menu_icon(m.addAction("清空记录并隐藏\tCtrl+Alt+X", self.panic), "trash")
@@ -616,6 +616,7 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         self.input.files.connect(self.send_files)
         self.input.at_typed.connect(self.on_at_typed)
         self.input.textChanged.connect(self._on_input_changed)
+        self.input.focus_changed.connect(self._on_input_focus)
         self.input.keystroke.connect(self.on_keystroke)
         pl.addWidget(self.input, 1)
         self.send_btn = tool("arrow_up", 30, "sendBtn", "发送(Enter)")
@@ -634,13 +635,38 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         self.jump_btn.setObjectName("jumpBottom")
         self.jump_btn.setText("↓ 回到底部")
         self.jump_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.jump_btn.setFixedHeight(28)
         self.jump_btn.setStyleSheet(
-            "QToolButton#jumpBottom { background: rgba(124,92,255,220); color: #FFFFFF; border: none;"
-            " border-radius: 15px; padding: 5px 14px; font-weight: 600; font-size: 12px; }"
+            "QToolButton#jumpBottom { background: rgba(124,92,255,215); color: #FFFFFF;"
+            " border: 1px solid rgba(255,255,255,90); border-radius: 14px;"
+            " padding: 0 14px; font-weight: 600; font-size: 12px; }"
             "QToolButton#jumpBottom:hover { background: rgba(124,92,255,245); }"
         )
         self.jump_btn.clicked.connect(self._jump_to_bottom)
         self.jump_btn.hide()
+        from .island import DynamicIsland
+        self.island = DynamicIsland(panel)
+        self.island.header_gap_fn = self._island_header_gap
+        self.island.clicked.connect(self._on_island_click)
+        panel.island = self.island
+        self.island.place()
+        self.island.show()
+        self.island.raise_()
+        self.sticky_date = StickyDatePill(panel)
+        self.peer_card = PeerHoverCard(self)
+        self.peer_card.action.connect(self._on_peer_card_action)
+        self._peer_hover_pid = ""
+        self._peer_hover_pos = QPoint()
+        self._peer_show_t = QTimer(self)
+        self._peer_show_t.setSingleShot(True)
+        self._peer_show_t.setInterval(360)
+        self._peer_show_t.timeout.connect(self._show_peer_card_now)
+        self._peer_hide_t = QTimer(self)
+        self._peer_hide_t.setSingleShot(True)
+        self._peer_hide_t.setInterval(260)
+        self._peer_hide_t.timeout.connect(self.peer_card.hide)
+        self.peer_card.entered.connect(self._peer_hide_t.stop)
+        self.peer_card.left.connect(self._peer_hide_t.start)
         panel.pet, panel.effects, panel.pill = self.pet, self.effects, pill
         self._pill, self._composer = pill, comp
         pill.installEventFilter(self)
@@ -830,22 +856,50 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
 
     def set_compact_side(self, on: bool) -> None:
         self.compact_side = bool(on)
-        self.sidebar_panel.setFixedWidth(76 if self.compact_side else 284)
+        target_w = 76 if self.compact_side else 284
+        cur_w = self.sidebar_panel.width() or target_w
         self._side_lay.setContentsMargins(6 if self.compact_side else 12, 16, 6 if self.compact_side else 12, 10)
         self._me_lay.setContentsMargins(10 if self.compact_side else 8, 8, 6 if self.compact_side else 4, 8)
         for w in (self.side_title, self.gomoku_btn, self.duck_btn, self.theme_btn, self.add_btn,
                   self.me_name, self.me_sub, self.menu_btn):
             w.setVisible(not self.compact_side)
-        self._update_min_width()
+        if motion.ENABLED and self.isVisible() and cur_w != target_w:
+            if self.compact_side:
+                self._update_min_width()
+            motion.animate(self, float(cur_w), float(target_w), 190,
+                           lambda v: self.sidebar_panel.setFixedWidth(int(round(v))),
+                           on_done=lambda: (self._update_min_width(), self._refit_bubbles()),
+                           key="_side_anim")
+        else:
+            self.sidebar_panel.setFixedWidth(target_w)
+            self._update_min_width()
+            self._refit_bubbles()
         self.conv_list.doItemsLayout()
         self.conv_list.viewport().update()
-        self._refit_bubbles()
 
     def set_members_open(self, on: bool) -> None:
         self.members_open = bool(on)
-        self.members_panel.setVisible(self.members_open)
-        self._update_min_width()
-        self._refit_bubbles()
+        if motion.ENABLED and self.isVisible():
+            if self.members_open:
+                self.members_panel.setFixedWidth(0)
+                self.members_panel.setVisible(True)
+                motion.animate(self, 0.0, 232.0, 190,
+                               lambda v: self.members_panel.setFixedWidth(int(round(v))),
+                               on_done=lambda: (self._update_min_width(), self._refit_bubbles()),
+                               key="_mem_anim")
+            else:
+                self._update_min_width()
+                cur = float(self.members_panel.width() or 232)
+                motion.animate(self, cur, 0.0, 175,
+                               lambda v: self.members_panel.setFixedWidth(int(round(v))),
+                               on_done=lambda: (self.members_panel.setVisible(False), self.members_panel.setFixedWidth(232),
+                                                self._update_min_width(), self._refit_bubbles()),
+                               key="_mem_anim")
+        else:
+            self.members_panel.setFixedWidth(232)
+            self.members_panel.setVisible(self.members_open)
+            self._update_min_width()
+            self._refit_bubbles()
 
     def nativeEvent(self, eventType, message):
         if self.frameless and sys.platform == "win32" and not self.isMaximized():
@@ -967,6 +1021,14 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         if changed:
             self._leave_conv()
         self.current_key = key
+        if conv.unread > 0 and conv.messages:
+            non_sys = [m for m in conv.messages if not m.system]
+            if non_sys:
+                self._unread_div_mid = non_sys[max(0, len(non_sys) - conv.unread)].mid
+            else:
+                self._unread_div_mid = None
+        else:
+            self._unread_div_mid = None
         conv.unread = 0
         conv.at_me = False
         self._render_messages()
@@ -1047,7 +1109,10 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
             msgs = self.render_window(conv)           # 只渲染屏幕附近的一段(往上 / 往下翻再接)
             grps = self.group_positions(msgs)
             prev = None
+            u_mid = getattr(self, "_unread_div_mid", None)
             for m, grp in zip(msgs, grps):
+                if u_mid and m.mid == u_mid:
+                    self.msg_layout.addWidget(label("── 以下是新消息 ──", "unreadDiv", center=True))
                 self._append_msg(conv, m, prev, maxw, grp)
                 prev = m
             if conv.kind == "dm":
@@ -1116,6 +1181,8 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         b.file_action.connect(self.on_file_action)
         b.hovered.connect(self.hover_bubble)
         b.unhovered.connect(self.unhover_bubble)
+        b.avatar_hover.connect(self._schedule_peer_card)
+        b.avatar_leave.connect(self._leave_peer_card)
         if self.search_hits and m.mid in self.search_hits:
             cur = self.search_hits[self.search_idx] if 0 <= self.search_idx < len(self.search_hits) else None
             b.set_search(self.search_edit.text().strip(), m.mid == cur)
@@ -1138,6 +1205,7 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         maxw = self._bubble_maxw()
         for b in self.bubbles.values():
             b.fit(maxw)
+        self._sync_jump_btn()
 
     def _on_range_changed(self, _lo: int, hi: int) -> None:
         if self.apply_anchor():
@@ -1150,29 +1218,136 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         if self._stick:
             self._below_unread = 0
         self._sync_jump_btn()
+        self._update_sticky_date()
         self.maybe_page(value)
+
+    def _update_sticky_date(self) -> None:
+        pill = getattr(self, "sticky_date", None)
+        if pill is None or self.current is None or self._stick:
+            return
+        vp = self.msg_area.viewport()
+        top_y = HEADER_H + 8
+        for i in range(self.msg_layout.count()):
+            w = self.msg_layout.itemAt(i).widget()
+            if isinstance(w, Bubble) and w.isVisible() and not w.msg.system:
+                y = w.mapTo(vp, QPoint(0, 0)).y()
+                if y + w.height() >= top_y:
+                    ts = w.msg.time
+                    lt = time.localtime(ts)
+                    now_lt = time.localtime()
+                    if (lt.tm_year, lt.tm_yday) == (now_lt.tm_year, now_lt.tm_yday):
+                        label_d = "今天"
+                    elif (lt.tm_year, lt.tm_yday) == (now_lt.tm_year, now_lt.tm_yday - 1):
+                        label_d = "昨天"
+                    elif lt.tm_year == now_lt.tm_year:
+                        label_d = f"{lt.tm_mon}月{lt.tm_mday}日"
+                    else:
+                        label_d = f"{lt.tm_year}年{lt.tm_mon}月{lt.tm_mday}日"
+                    pill.show_date(label_d)
+                    return
+
+    def _schedule_peer_card(self, pid: str, gpos: QPoint) -> None:
+        if not pid or pid == self.me.get("id"):
+            return
+        self._peer_hide_t.stop()
+        self._peer_hover_pid = pid
+        self._peer_hover_pos = gpos
+        self._peer_show_t.start()
+
+    def _leave_peer_card(self) -> None:
+        self._peer_show_t.stop()
+        self._peer_hide_t.start()
+
+    def _show_peer_card_now(self) -> None:
+        pid = self._peer_hover_pid
+        if not pid or not self.isVisible():
+            return
+        peer = self.peers.get(pid, {})
+        card = getattr(self, "pr_cards", {}).get(pid, {})
+        nick = peer.get("nick") or card.get("n") or "好友"
+        tag = peer.get("tag") or pid[:4]
+        online = bool(peer.get("online"))
+        lv = int(card.get("lv") or peer.get("level") or 0)
+        title = str(peer.get("title") or "")
+        pm = None
+        if card:
+            try:
+                from .fun import pet_pixmap
+                pm = pet_pixmap(card.get("sp", "cat"), max(1, lv), tuple(card.get("wear") or ()), 120, 82)
+            except Exception:
+                pm = None
+        self.peer_card.show_peer(pid, nick, tag, online, lv, title, pm, self._peer_hover_pos)
+
+    def _on_peer_card_action(self, kind: str, pid: str) -> None:
+        if kind == "dm":
+            self.open_dm(pid, select=True)
+        elif kind == "visit":
+            self.send_pet_visit(pid)
+        elif kind == "photo":
+            self.show_photobooth(pid)
+
+    def _on_input_focus(self, focused: bool) -> None:
+        pill = getattr(self, "_pill", None)
+        if pill is not None:
+            pill.setProperty("focused", focused)
+            repolish(pill)
 
     def _sync_jump_btn(self) -> None:
         btn = getattr(self, "jump_btn", None)
         if btn is None:
             return
-        if self._stick or self.current is None:
+        # 当处于翻页历史模式(not _win_bottom)时交给 latest_btn 统一显示,避免两个按钮重叠
+        if self._stick or self.current is None or not self._win_bottom:
             btn.hide()
             return
         btn.setText(f"↓ {self._below_unread} 条新消息" if self._below_unread else "↓ 回到底部")
         btn.adjustSize()
         pw = self.chat_panel.width()
         ch = self._composer.height() if getattr(self, "_composer", None) else 70
-        btn.move(max(12, pw - btn.width() - 24), max(HEADER_H + 12, self.chat_panel.height() - ch - btn.height() - 14))
+        # 居中摆在输入框正上方,完全避开右侧宠物与左侧群宠物
+        btn.move(max(12, (pw - btn.width()) // 2), max(HEADER_H + 12, self.chat_panel.height() - ch - btn.height() - 12))
         btn.show()
         btn.raise_()
 
     def _jump_to_bottom(self) -> None:
         self._below_unread = 0
         self._stick = True
-        sb = self.msg_area.verticalScrollBar()
-        sb.setValue(sb.maximum())
+        if not self._win_bottom:
+            self.back_to_latest()
+        else:
+            sb = self.msg_area.verticalScrollBar()
+            sb.setValue(sb.maximum())
         self._sync_jump_btn()
+
+    def _island_header_gap(self) -> tuple[int, int, int, int]:
+        """计算顶栏左侧标题文字终点、右侧按钮组起点与顶栏下方安全停靠 y,确保灵动岛绝不遮挡任何按钮。"""
+        left_end = 68
+        for lb in (getattr(self, "chat_title", None), getattr(self, "chat_sub", None)):
+            if lb is not None and lb.isVisible():
+                tw = lb.fontMetrics().horizontalAdvance(lb.text())
+                vis_w = min(tw, lb.width()) if lb.width() > 0 else tw
+                left_end = max(left_end, lb.x() + vis_w + 14)
+        right_start = self.chat_panel.width() - 16
+        for btn in (getattr(self, "verify_btn", None), getattr(self, "prank_btn", None),
+                    getattr(self, "search_btn", None), getattr(self, "bell_btn", None),
+                    getattr(self, "clear_btn", None), getattr(self, "members_btn", None),
+                    getattr(self, "win_bar", None)):
+            if btn is not None and btn.isVisible() and btn.width() > 0:
+                right_start = min(right_start, btn.x() - 10)
+        below_y = HEADER_H + 8
+        if getattr(self, "notice_bar", None) is not None and self.notice_bar.isVisible():
+            below_y += 44
+        if getattr(self, "search_bar", None) is not None and self.search_bar.isVisible():
+            below_y += 48
+        return left_end, right_start, HEADER_H, below_y
+
+    def _on_island_click(self, key: str) -> None:
+        if key == "__focus__":
+            self.show_focus_dialog()
+        elif key == "__ambient__":
+            self.set_ambient(None)
+        elif key and key in self.convs:
+            self.select_conv(key)
 
     def set_chat_font_size(self, px: int) -> None:
         px = max(12, min(18, int(px)))
@@ -1247,7 +1422,7 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
             self._win_hi = len(conv.messages)
             self._append_msg(conv, m, prev, self._bubble_maxw())
             self.after_live_append()
-            if m.mime == "image/gif":
+            if m.mime == "image/gif" or m.aura:
                 self.schedule_gif_sync()
             if visible and not m.system:
                 self._message_fx(m)
@@ -1255,6 +1430,8 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
             conv.unread += 1
             if m.mention:
                 conv.at_me = True
+            if getattr(self, "island", None) is not None and not m.mine:
+                self.island.show_message(conv.key, m.nick or conv.title, self._preview_of(m, conv))
         if not m.mine and not m.system and count_unread:
             self.typing_until.pop(m.sender, None)
             self._refresh_typing_bubble()
@@ -1420,8 +1597,12 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
                                          T["good"] if conv.verified else T["icon"], 17))
             self.verify_btn.setObjectName("verified" if conv.verified else "textBtn")
             repolish(self.verify_btn)
+        if getattr(self, "island", None) is not None:
+            QTimer.singleShot(0, self.island.place)
 
     def _refresh_members(self) -> None:
+        if getattr(self, "island", None) is not None:
+            self.island.set_online(sum(1 for p in self.peers.values() if p.get("online")))
         conv = self.current
         self.member_list.clear()
         if conv is None:
@@ -2261,9 +2442,12 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
             self._on_search_text(self.search_edit.text())
 
     def close_search(self) -> None:
-        if not self.search_bar.isVisible() and not self.search_hits:
+        if not self.search_bar.isVisible() and not self.search_hits and getattr(self, "_search_filter", "all") == "all":
             return
         self.search_bar.setVisible(False)
+        self._search_filter = "all"
+        if getattr(self, "search_filter_btn", None) is not None:
+            self.search_filter_btn.setText("全部")
         self.search_hits, self.search_idx = [], -1
         for b in self.bubbles.values():
             b.set_search("", False)
@@ -2373,6 +2557,8 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         for need, tid, name, _dur in TRICKS:
             if need == lv:
                 lines.append(("🎭", f"新动作「{name}」(右键宠物 → 表演一个)"))
+        if len(lines) >= 7:
+            lines = lines[:6]
         lines.append(("🎟️", "抽卡券 × 1"))
         title = f"{g.name} 升级了!"
         sub = f"✨ {g.name} 进化成了{form_now[1]}!" if evolved else ""
@@ -2539,6 +2725,18 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         lists = {getattr(self, "_member_vp", None): "member", getattr(self, "_conv_vp", None): "conv"}
         if obj in lists and obj is not None:
             t = ev.type()
+            if lists[obj] == "member":
+                if t == QEvent.Type.MouseMove:
+                    pos = ev.position().toPoint() if hasattr(ev, "position") else ev.pos()
+                    it = self.member_list.itemAt(pos)
+                    d = (it.data(Qt.ItemDataRole.UserRole) or {}) if it else {}
+                    if d.get("id") and not d.get("me"):
+                        if d["id"] != self._peer_hover_pid or not self.peer_card.isVisible():
+                            self._schedule_peer_card(d["id"], obj.mapToGlobal(QPoint(0, pos.y())))
+                    else:
+                        self._leave_peer_card()
+                elif t == QEvent.Type.Leave:
+                    self._leave_peer_card()
             if t in (QEvent.Type.DragEnter, QEvent.Type.DragMove):
                 target = self._drop_target(lists[obj], ev.position().toPoint()) if drop_paths(ev.mimeData()) else None
                 if target is not None:
@@ -2571,8 +2769,13 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         return bool(pid) and self.typing_until.get(pid, 0) > time.monotonic()
 
     def _on_input_changed(self) -> None:
+        has_text = bool(self.input.toPlainText().strip())
+        if getattr(self, "send_btn", None) is not None:
+            if bool(self.send_btn.property("active")) != has_text:
+                self.send_btn.setProperty("active", has_text)
+                repolish(self.send_btn)
         conv = self.current
-        if conv is None or conv.kind != "dm" or not self.send_typing_on or not self.input.toPlainText().strip():
+        if conv is None or conv.kind != "dm" or not self.send_typing_on or not has_text:
             return
         now = time.monotonic()
         if now - self._typing_sent.get(conv.target, 0) >= 3 and self.peers.get(conv.target, {}).get("online"):

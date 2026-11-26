@@ -6,6 +6,7 @@ from __future__ import annotations
 import random
 import re
 import secrets
+import time
 import uuid
 
 from PySide6.QtCore import QPoint, QPointF, QTimer, Qt, Signal
@@ -651,6 +652,7 @@ class GamesMixin:
         fun_tiles.append(("🎯", "掷骰子", "1~6 点手气比拼", self.roll_dice))
         fun_tiles.append(("🎨", "一起画", "多人实时同步白板", self.start_board))
         fun_tiles.append(("⚡", "快捷常用语", "摸鱼一键回复短语", self.open_quick_phrases))
+        fun_tiles.append(("🍅", "专注番茄钟", "萌宠伴学 + 喝水提醒", self.show_focus_dialog))
         fun_tiles.append(("⏰", "定时提醒", "喝水/开会倒计时提醒", self.open_reminder_dialog))
 
         party_tiles: list[tuple[str, str, str, object]] = [
@@ -660,18 +662,21 @@ class GamesMixin:
         ]
         if conv.kind in ("lobby", "room"):
             party_tiles.append(("🐾", "宠物等级榜", "看看谁家萌宠最强", lambda c=conv: self.open_pet_rank(c)))
+        party_tiles.append(("🍉", "合成大萌宠", "2.5D 物理合成大西瓜", self.show_merge_game))
         party_tiles.append(("🎮", "接零食大作战", "2.5D 道具与狂热双倍", self.show_snack_game))
         party_tiles.append(("☁️", "云端跳跳乐", "2.5D 萌宠蹦云冲高分", self.show_cloud_game))
         party_tiles.append(("🎁", "签到与通行证", "每日领限定装扮动作", self.show_pet_pass))
 
         social_tiles: list[tuple[str, str, str, object]] = []
         if group:
+            social_tiles.append(("📸", "萌宠合拍大头贴", "2.5D 拍立得贴纸合影", lambda: self.show_photobooth()))
             social_tiles.append(("📢", "群公告", "置顶通知全员可见", self.edit_notice))
             social_tiles.append(("📝", "匿名纸条", "多跳混淆隐藏作者", self.send_anon_note))
             social_tiles.append(("🔥", "本周排行榜", "话痨与活跃之星", self.show_rank))
             if conv.kind == "room":
                 social_tiles.append(("✏️", "修改群名", "同步更新暗号群名", lambda c=conv: self.rename_room(c)))
         else:
+            social_tiles.append(("📸", "双人萌宠大头贴", "生成拍立得合影直发", lambda c=conv: self.show_photobooth(c.target)))
             social_tiles.append(("👉", "戳一戳", "轻轻拍拍对方窗口", lambda c=conv: self.poke(c.target, c)))
             social_tiles.append(("🐾", f"让{self.pet_growth.name}串门", "派萌宠去对方桌边玩",
                                  lambda c=conv: self.send_pet_visit(c.target)))
@@ -698,8 +703,16 @@ class GamesMixin:
         pop = BentoToolsPopup(self, sections)
         pos = self.tools_btn.mapToGlobal(QPoint(0, 0))
         pop.adjustSize()
-        x = max(8, pos.x() - 16)
-        y = max(8, pos.y() - pop.sizeHint().height() - 10)
+        pw, ph = pop.width(), pop.sizeHint().height()
+        x = pos.x() - 16
+        y = pos.y() - ph - 10
+        scr = self.screen()
+        if scr is not None:
+            geo = scr.availableGeometry()
+            x = max(geo.left() + 8, min(x, geo.right() - pw - 8))
+            y = max(geo.top() + 8, min(y, geo.bottom() - ph - 8))
+        else:
+            x, y = max(8, x), max(8, y)
         pop.move(x, y)
         pop.show()
 
@@ -727,16 +740,30 @@ class GamesMixin:
             self._system(conv, f"⏰ 已设置 {mins} 分钟提醒：「{note}」")
         if hasattr(self, "pet"):
             self.pet.say(f"记好啦! {mins} 分钟后提醒你~", 2.5)
+        seq = getattr(self, "_remind_seq", 0) + 1
+        self._remind_seq = seq
+        isl = getattr(self, "island", None)
+        if isl is not None:
+            isl.set_reminder(note, time.monotonic() + mins * 60)
+
+        t = QTimer(self)
+        t.setSingleShot(True)
 
         def _fire() -> None:
+            if getattr(self, "_remind_seq", 0) == seq and getattr(self, "island", None) is not None:
+                self.island.clear_reminder()
             if hasattr(self, "pet"):
                 self.pet.celebrate()
                 self.pet.say(f"⏰ {note}", 5.0)
             if self.current is not None:
                 self._system(self.current, f"⏰ 定时提醒到点啦：{note}")
-            info(self, "⏰ 定时提醒", note)
+            # 老板键隐藏窗口时不弹出模态框,避免暴露隐藏状态
+            if self.isVisible() and not self.isMinimized():
+                info(self, "⏰ 定时提醒", note)
+            t.deleteLater()
 
-        QTimer.singleShot(mins * 60 * 1000, _fire)
+        t.timeout.connect(_fire)
+        t.start(mins * 60 * 1000)
 
     # ---------------------------------------------------------------- 投票 / 抽签 / 骰子
     def start_poll(self) -> None:

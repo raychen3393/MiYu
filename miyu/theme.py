@@ -346,8 +346,8 @@ _HEX = re.compile(r"#[0-9A-Fa-f]{6}")
 # 主题色 / 气泡颜色的预设色板(个性化窗口里的小圆点)
 ACCENT_PRESETS = ["#007AFF", "#5856D6", "#A855F7", "#E0457F", "#FF3B30", "#FF9500", "#F2B705", "#34C759",
                   "#14B8A6", "#0EA5E9", "#64748B", "#1D1D1F"]
-CUSTOM: dict = {"accent": "", "bubble": "", "glass": 50, "bg_dim": 35, "bg_blur": True, "wall_dim": 0,
-                "ambient": True, "ambient_level": 2}
+CUSTOM: dict = {"accent": "", "bubble": "", "glass": 50, "bg_dim": 35, "bg_blur": True, "bg_blur_px": 12,
+                "wall_dim": 0, "ambient": True, "ambient_level": 2}
 _custom_bg = None            # 自定义背景图(QImage),None = 用主题自带的渐变壁纸
 _custom_bg_id = 0
 
@@ -367,6 +367,14 @@ def clean_custom(d) -> dict:
         except (TypeError, ValueError):
             out[key] = default
     out["bg_blur"] = bool(d.get("bg_blur", True))
+    if "bg_blur_px" in d:
+        try:
+            out["bg_blur_px"] = max(0, min(24, int(d.get("bg_blur_px", 12))))
+        except (TypeError, ValueError):
+            out["bg_blur_px"] = 12 if out["bg_blur"] else 0
+    else:
+        out["bg_blur_px"] = 12 if out["bg_blur"] else 0
+    out["bg_blur"] = out["bg_blur_px"] > 0
     out["ambient"] = bool(d.get("ambient", True))           # 动态背景(光斑慢慢漂);关掉 = 静态
     out["ambient_level"] = d.get("ambient_level") if d.get("ambient_level") in AMBIENT_LEVELS else 2
     return out
@@ -659,8 +667,11 @@ def _custom_wallpaper(w: int, h: int, dpr: float) -> QPixmap:
                             Qt.TransformationMode.SmoothTransformation)
     x, y = max(0, (img.width() - pw) // 2), max(0, (img.height() - ph) // 2)
     img = img.copy(x, y, pw, ph)
-    if CUSTOM.get("bg_blur", True):                     # 缩小再放大两次 ≈ 高斯模糊,很便宜
-        for div in (14, 6):
+    blur_px = int(CUSTOM.get("bg_blur_px", 12 if CUSTOM.get("bg_blur", True) else 0))
+    if blur_px > 0:                                       # 3.7 可调强度模糊(0~24):按模糊半径动态缩放两次近似高斯模糊
+        d1 = max(2, int(round(2 + blur_px * 0.9)))
+        d2 = max(2, int(round(1.5 + blur_px * 0.4)))
+        for div in (d1, d2):
             tiny = img.scaled(max(1, pw // div), max(1, ph // div), Qt.AspectRatioMode.IgnoreAspectRatio,
                               Qt.TransformationMode.SmoothTransformation)
             img = tiny.scaled(pw, ph, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
@@ -678,7 +689,7 @@ def _custom_wallpaper(w: int, h: int, dpr: float) -> QPixmap:
 def wallpaper(w: int, h: int, dpr: float = 1.0) -> QPixmap:
     """取当前主题、当前尺寸的壁纸(有缓存,窗口大小或主题变了才重画)。"""
     key = (T["name"], T.get("variant"), w, h, round(dpr, 2), _custom_bg_id if _custom_bg is not None else 0,
-           CUSTOM.get("bg_dim"), CUSTOM.get("bg_blur"), CUSTOM.get("wall_dim"))
+           CUSTOM.get("bg_dim"), CUSTOM.get("bg_blur"), CUSTOM.get("bg_blur_px"), CUSTOM.get("wall_dim"))
     pm = _wall_cache.get(key)
     if pm is None:
         if len(_wall_cache) > 6:
@@ -1054,13 +1065,25 @@ QWidget#central {{ background: transparent; }}
 QFrame#sidebar {{ background: {side}; border: none; border-right: 1px solid {t['line']}; }}
 QFrame#members {{ background: {side}; border: none; border-left: 1px solid {t['line']}; }}
 QWidget#chatPanel {{ background: {chat}; }}
-QFrame#chatHeader {{ background: {header}; border: none; border-bottom: 1px solid {t['line']}; }}
+QFrame#chatHeader {{
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(255,255,255,{0.10 if is_dark() else 0.72}), stop:1 {header});
+    border: none; border-top: 1px solid rgba(255,255,255,{0.20 if is_dark() else 0.78}); border-bottom: 1px solid {t['line']};
+}}
 QFrame#composer {{ background: transparent; }}
-QFrame#composerPill {{ background: {t['pill']}; border: 1px solid {t['line_strong']}; border-radius: 19px; }}
+QFrame#composerPill {{
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(255,255,255,{0.12 if is_dark() else 0.92}), stop:1 {t['pill']});
+    border: 1px solid {t['line_strong']};
+    border-top: 1px solid rgba(255,255,255,{0.28 if is_dark() else 0.96});
+    border-radius: 20px;
+}}
+QFrame#composerPill[focused="true"] {{
+    border: 1.5px solid {t['accent']};
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(255,255,255,{0.16 if is_dark() else 0.98}), stop:1 {t['pill']});
+}}
 QFrame#meCard {{ background: transparent; border-radius: 12px; }}
 QFrame#meCard:hover {{ background: {t['hover']}; }}
-QFrame#card {{ background: {card}; border: 1px solid {t['line']}; border-radius: 14px; }}
-QFrame#plainCard {{ background: {t['btn2']}; border: none; border-radius: 14px; }}
+QFrame#card {{ background: {card}; border: 1px solid {t['line']}; border-top: 1px solid rgba(255,255,255,0.24); border-radius: 14px; }}
+QFrame#plainCard {{ background: {t['btn2']}; border: 1px solid {t['line']}; border-top: 1px solid rgba(255,255,255,0.22); border-radius: 14px; }}
 QScrollArea#msgArea, QWidget#msgContainer {{ background: transparent; border: none; }}
 QDialog#viewer {{ background: #0B0B0C; }}
 QFrame#viewerBar {{ background: rgba(28,28,30,0.92); border-top: 1px solid rgba(255,255,255,0.08); }}
@@ -1120,9 +1143,13 @@ QToolButton:hover {{ color: {t['text']}; }}
 {_h('QToolButton:pressed', t['select'], hov)}
 QToolButton:disabled {{ color: {t['faint']}; }}
 QToolButton::menu-indicator {{ image: none; width: 0; }}
-QToolButton#round {{ padding: 0; }}
+QToolButton#round {{ padding: 0; background: rgba(255,255,255,{0.06 if is_dark() else 0.34}); border: 1px solid {t['line']}; border-radius: 14px; }}
+QToolButton#round:hover {{ background: {t['hover']}; border: 1px solid {t['line_strong']}; }}
 QToolButton#burnOn {{ padding: 0 10px 0 6px; color: {t['burn']}; font-weight: 600; background: {t['hover']}; }}
-QToolButton#sendBtn {{ background: {t['accent']}; padding: 0; }}
+QToolButton#sendBtn {{ background: {t['btn2']}; padding: 0; border-radius: 15px; }}
+QToolButton#sendBtn[active="true"] {{
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {qcolor(t['accent']).lighter(118).name()}, stop:1 {t['accent']});
+}}
 {_h('QToolButton#sendBtn:hover', t['accent_hover'], hov)}
 QToolButton#sendBtn:disabled {{ background: {t['btn2']}; }}
 QToolButton#verified {{ color: {t['good']}; }}
@@ -1143,8 +1170,14 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: none
 QCheckBox {{ spacing: 8px; color: {t['text']}; }}
 
 QLabel {{ background: transparent; }}
-QLabel#bubbleMine {{ background: {t['mine']}; color: {t['on_mine']}; border-radius: {R}px; {_pad(0)} }}
-QLabel#bubbleOther {{ background: {t['other']}; color: {t['text']}; border-radius: {R}px; {_pad(0)} }}
+QLabel#bubbleMine {{
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {qcolor(t['mine']).lighter(110).name()}, stop:1 {t['mine']});
+    color: {t['on_mine']}; border: 1px solid rgba(255,255,255,0.20); border-radius: {R}px; {_pad(1)}
+}}
+QLabel#bubbleOther {{
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {qcolor(t['other']).lighter(105).name()}, stop:1 {t['other']});
+    color: {t['text']}; border: 1px solid {t['line']}; border-radius: {R}px; {_pad(1)}
+}}
 QLabel#bubbleMine, QLabel#bubbleMineBurn {{ selection-background-color: rgba(255,255,255,0.35); }}
 QLabel#bubbleMineBurn {{
     background: {t['mine']}; color: {t['on_mine']}; border: 1px solid {t['burn_line']}; border-radius: {R}px; {_pad(1)}
@@ -1164,10 +1197,11 @@ QFrame#hoverBar {{ background: {t['card']}; border: 1px solid {t['line_strong']}
 QToolButton#hoverBtn {{ border-radius: 12px; padding: 0; background: transparent; }}
 QToolButton#hoverBtn:hover {{ background: {t['btn2_hover']}; }}
 QFrame#swatchRow QPushButton {{ border-radius: 13px; padding: 0; min-height: 0; }}
-QPushButton#choice {{ padding: 6px 10px; border: 1px solid transparent; }}
+QPushButton#choice {{ padding: 6px 10px; border: 1px solid {t['line']}; border-top: 1px solid rgba(255,255,255,0.22); border-radius: 11px; }}
 QPushButton#latestBtn {{ background: {t['card']}; color: {t['accent']}; border: 1px solid {t['line_strong']}; border-radius: 15px; padding: 5px 16px; font-weight: 600; min-height: 20px; }}
 QPushButton#latestBtn:hover {{ background: {t['select']}; }}
-QPushButton#choice:checked {{ background: {t['select']}; border: 1px solid {t['accent']}; color: {t['text']}; font-weight: 600; }}
+QPushButton#choice:checked {{ background: {t['select']}; border: 1.5px solid {t['accent']}; color: {t['text']}; font-weight: 600; }}
+QLabel#unreadDiv {{ color: {t['accent']}; font-size: 8.5pt; font-weight: 600; padding: 6px 0 4px 0; }}
 QPushButton#choice:disabled {{ color: {t['faint']}; }}
 QLabel#previewMine {{ background: {t['mine']}; color: {t['on_mine']}; border-radius: {R}px; {_pad(0)} }}
 QLabel#previewOther {{ background: {t['other']}; color: {t['text']}; border-radius: {R}px; {_pad(0)} }}
@@ -1180,8 +1214,11 @@ QFrame#videoCard, QFrame#videoCardMine {{ background: transparent; border: none;
 QLabel#fileName {{ font-weight: 600; }}
 QLabel#fileSub {{ color: {t['sub']}; font-size: 8.5pt; }}
 QLabel#fileWarn {{ color: {t['warn']}; font-size: 8pt; }}
-QProgressBar#fileProgress {{ background: {t['btn2']}; border: none; border-radius: 2px; min-height: 4px; max-height: 4px; }}
-QProgressBar#fileProgress::chunk {{ background: {t['accent']}; border-radius: 2px; }}
+QProgressBar#fileProgress {{ background: {t['btn2']}; border: none; border-radius: 3px; min-height: 6px; max-height: 6px; }}
+QProgressBar#fileProgress::chunk {{
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {t['accent']}, stop:1 {qcolor(t['accent']).lighter(128).name()});
+    border-radius: 3px;
+}}
 QFrame#replyBar {{ background: {t['btn2']}; border: none; border-radius: 12px; }}
 QFrame#noticeBar {{ background: {t['card']}; border: 1px solid {t['line_strong']}; border-radius: 19px; }}
 QLabel#noticeText {{ color: {t['text']}; font-size: 9pt; }}

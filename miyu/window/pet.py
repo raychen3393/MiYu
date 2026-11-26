@@ -282,6 +282,8 @@ class GachaDialog(Dialog):
         self.card = QFrame()
         self.card.setObjectName("plainCard")
         self.card.setMinimumHeight(178)
+        from ..island import HoloOverlay
+        self._card_holo = HoloOverlay(self.card, radius=14.0)
         cl = QVBoxLayout(self.card)
         cl.setContentsMargins(12, 10, 12, 10)
         cl.setSpacing(4)

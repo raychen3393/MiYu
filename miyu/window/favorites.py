@@ -73,7 +73,9 @@ class FavoritesMixin:
         self._favs_dirty = True
 
     def self_note(self, text: str) -> None:
-        self._self_add(Msg(text[:MAX_TEXT]))
+        skin = self.current_skin() if hasattr(self, "current_skin") else None
+        aura = (self.pet_growth.aura or None) if hasattr(self, "pet_growth") else None
+        self._self_add(Msg(text[:MAX_TEXT], skin=skin, aura=aura))
         self.input.clear()
         self.cancel_reply()
         if self.fun["pet"]:

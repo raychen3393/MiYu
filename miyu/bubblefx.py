@@ -44,14 +44,16 @@ def back(k: float, c: float = 1.7) -> float:
 
 
 def enter_pose(mode: str, k: float, mine: bool) -> tuple[float, float, float, float, float]:
-    """动画进行到 k(0~1)时气泡的样子:(横向偏移, 纵向偏移, 缩放, 旋转角度, 不透明度)。"""
+    """3.5 升级发送消息「丝滑飞入成泡」:自己发的消息从底部输入框弹性飞入、柔和微回弹。"""
     side = 1 if mine else -1
     if mode == "lively":
         e = ease_out(k)
-        return ((1 - e) * 26 * side, (1 - e) * 16, 0.7 + 0.3 * back(k), (1 - e) * 3.5 * -side,
+        dy = (1 - e) * (28 if mine else 16)
+        return ((1 - e) * 26 * side, dy, 0.7 + 0.3 * back(k), (1 - e) * 3.5 * -side,
                 min(1.0, k * 2.4))
     e = ease_out(k)
-    return (1 - e) * 12 * side, (1 - e) * 10, 0.92 + 0.08 * e, 0.0, min(1.0, k * 1.7)
+    b = back(k, 1.15) if mine else e
+    return (1 - e) * 14 * side, (1 - e) * (24 if mine else 12), 0.88 + 0.12 * b, 0.0, min(1.0, k * 1.9)
 
 
 class _Ghost(QWidget):

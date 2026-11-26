@@ -20,7 +20,7 @@ from miyu.window import pet as win_pet, records as win_records  # noqa: E402
 
 class V30BugfixAndSecurityTests(unittest.TestCase):
     def test_version_and_changelog_synced(self):
-        self.assertEqual(version.VERSION, "3.4.0")
+        self.assertEqual(version.VERSION, "3.7.0")
         self.assertEqual(changelog.CHANGELOG[0][0], version.VERSION)
 
     def test_password_change_preserves_all_encrypted_blobs(self):
@@ -53,20 +53,21 @@ class V30BugfixAndSecurityTests(unittest.TestCase):
             self.assertEqual(st3.load_blob(storage.BG_FILE), b"custom-wallpaper-bytes")
             self.assertEqual(st3.load_blob(storage.GAMES_FILE), b'{"matches": [1, 2, 3]}')
 
-    def test_level_cap_50_everywhere_and_mythic_badge(self):
+    def test_level_cap_100_everywhere_and_mythic_badge(self):
         self.assertEqual(core.clean_level(48), 48)
         self.assertEqual(core.clean_level(50), 50)
-        self.assertEqual(core.clean_level(51), 0)
+        self.assertEqual(core.clean_level(100), 100)
+        self.assertEqual(core.clean_level(101), 0)
         self.assertEqual(theme.level_tier(45), 4)
         self.assertEqual(theme.LEVEL_TIERS[4][1], "神话")
         cleaned = win_pet.PetMixin.clean_pet_info(
-            {"species": "capy", "level": 47, "name": "豚豚", "coat": "siamese", "eyes": "hetero"}
+            {"species": "capy", "level": 99, "name": "豚豚", "coat": "siamese", "eyes": "hetero"}
         )
-        self.assertEqual(cleaned["level"], 47)
+        self.assertEqual(cleaned["level"], 99)
         self.assertEqual(cleaned["species"], "capy")
         self.assertEqual((cleaned["coat"], cleaned["eyes"]), ("siamese", "hetero"))
-        restored = win_records.RecordsMixin.msg_from_dict(None, {"mid": "x1", "text": "hi", "level": 49})
-        self.assertEqual(restored.level, 49)
+        restored = win_records.RecordsMixin.msg_from_dict(None, {"mid": "x1", "text": "hi", "level": 100})
+        self.assertEqual(restored.level, 100)
 
     def test_anon_first_hop_obfuscated(self):
         id_a = crypto.Identity()
@@ -232,6 +233,91 @@ class V30Pet3DAndUIUpgradeTests(unittest.TestCase):
         c_card = PR.make_card("a" * 64, "测试", "cat", "团团", 500, "2026-W48", 0, [], snack_best=320, cloud_best=450)
         self.assertEqual(PR.standings({"a" * 64: c_card}, None, "snack")[0]["sb"], 320)
         self.assertEqual(PR.standings({"a" * 64: c_card}, None, "cloud")[0]["cb"], 450)
+
+    def test_v351_audit_fixes(self):
+        # 1. SQLite 历史筛选搜索支持 img / file / mine
+        self.assertTrue(win_records.dict_matches({"img": "abc", "text": ""}, "", "img"))
+        self.assertFalse(win_records.dict_matches({"text": "纯文字"}, "", "img"))
+        self.assertTrue(win_records.dict_matches({"file": {"name": "report.pdf"}, "text": ""}, "report", "file"))
+        self.assertFalse(win_records.dict_matches({"text": "report"}, "report", "file"))
+        self.assertTrue(win_records.dict_matches({"mine": True, "text": "hi"}, "", "mine"))
+        self.assertFalse(win_records.dict_matches({"mine": False, "text": "hi"}, "", "mine"))
+        # 2. Bubble 动态边缘粒子视口暂停与连续分组不裁剪顶部边距
+        from miyu.widgets import AURA_BUBBLES
+        m = Msg("火焰测试", mine=True, aura="flame")
+        b = Bubble(m, False, False, 400, grp="single")
+        self.assertIn(b, AURA_BUBBLES)
+        self.assertEqual(b._aura_pad_v, 13)
+        b.set_group("first")
+        self.assertEqual(b.grp, "first")
+        b.set_aura_active(False)
+        self.assertFalse(b._aura_active)
+        # 3. motion.animate 回调参数名为 on_done
+        import inspect
+        from miyu import motion, petpass
+        self.assertIn("on_done", inspect.signature(motion.animate).parameters)
+        # 4. 云端跳跳乐物理可达性:普通/雷云弹跳最高点均严格大于云层最大间距(66px)
+        max_h = (petpass._CloudJumpStage.JUMP_VY ** 2) / (2 * petpass._CloudJumpStage.GRAVITY)
+        storm_h = (petpass._CloudJumpStage.STORM_VY ** 2) / (2 * petpass._CloudJumpStage.GRAVITY)
+        self.assertGreater(max_h, 120.0)
+        self.assertGreater(storm_h, 90.0)
+        # 5. 3.6 真 3D 盲盒引擎材质、开关持久化与 128 件新装扮/29 套套装
+        self.assertGreaterEqual(len(fun.ACCESSORIES), 128)
+        self.assertGreaterEqual(len(fun.OUTFITS), 29)
+        g3 = fun.PetGrowth()
+        self.assertEqual(g3.material, "clay")
+        self.assertTrue(g3.render3d)
+        self.assertTrue(g3.set_material("jelly"))
+        g3.set_render3d(False)
+        g3_r = fun.PetGrowth(g3.to_dict())
+        self.assertEqual(g3_r.material, "jelly")
+        self.assertFalse(g3_r.render3d)
+        self.assertTrue(g3.is_unlocked("bunny_hood"))
+        self.assertTrue(g3.is_unlocked("duck_float"))
+        self.assertTrue(g3.is_unlocked("plush_duck"))
+        # 每个新套装 3 件装扮分属不同部位,可一键穿全套
+        for oid in ("spa_duck", "star_voyager", "crystal_angel", "cyber_pilot", "sakura_night", "moon_mage"):
+            parts = fun.OUTFIT_BY_ID[oid][2]
+            slots = [fun.ACC_BY_ID[a][3] for a in parts]
+            self.assertEqual(len(slots), len(set(slots)), f"Slot collision in outfit {oid}")
+
+    def test_v370_upgrades(self):
+        # 1. 穿搭预设方案保存、序列化与一键套用
+        g = fun.PetGrowth({"xp": fun.xp_for_level(25)})
+        g.toggle("beret")
+        g.set_dye("head", "#FF6B8A")
+        g.set_coat("siamese")
+        g.set_eyes("hetero")
+        g.set_room("onsen")
+        self.assertTrue(g.save_preset("1", "温泉小猫", "cat"))
+        g2 = fun.PetGrowth(g.to_dict())
+        self.assertIn("1", g2.presets)
+        g2.wear.clear()
+        g2.dye.clear()
+        g2.set_coat("classic")
+        sp = g2.apply_preset("1")
+        self.assertEqual(sp, "cat")
+        self.assertIn("beret", g2.wear)
+        self.assertEqual(g2.dye.get("head"), "#FF6B8A")
+        self.assertEqual(g2.coat, "siamese")
+        self.assertTrue(g2.delete_preset("1"))
+        self.assertNotIn("1", g2.presets)
+        # 2. 合成大萌宠计分、排行榜名片与排名
+        from miyu import petmerge, petrank as PR
+        self.assertEqual(len(petmerge.MERGE_TIERS), 8)
+        gain, _ups = g.record_merge_score(360, today="2026-11-26")
+        self.assertGreaterEqual(gain, 80)
+        self.assertEqual(g.merge_best, 360)
+        self.assertEqual(fun.PetGrowth(g.to_dict()).merge_best, 360)
+        card = PR.make_card("b" * 64, "玩家", "capy", "豚豚", 800, "2026-W48", 0, [], merge_best=520)
+        self.assertEqual(PR.standings({"b" * 64: card}, None, "merge")[0]["mb"], 520)
+        # 3. 壁纸模糊度 0~24px 滑块与旧版 bool 兼容
+        c1 = theme.clean_custom({"bg_blur_px": 18, "bg_dim": 42})
+        self.assertEqual((c1["bg_blur_px"], c1["bg_blur"], c1["bg_dim"]), (18, True, 42))
+        c2 = theme.clean_custom({"bg_blur": False})
+        self.assertEqual((c2["bg_blur_px"], c2["bg_blur"]), (0, False))
+        # 4. 冗余实验文件 petgl.py 已清理
+        self.assertFalse(os.path.exists(os.path.join(os.path.dirname(__file__), "..", "miyu", "petgl.py")))
 
 
 if __name__ == "__main__":

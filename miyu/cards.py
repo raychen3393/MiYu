@@ -74,6 +74,8 @@ class CardBase(QFrame):
         self.lay = QVBoxLayout(self)
         self.lay.setContentsMargins(14, 12, 14, 12)
         self.lay.setSpacing(7)
+        from .island import HoloOverlay
+        self._holo = HoloOverlay(self, radius=16.0)
 
     def head(self, emoji: str, title: str) -> QLabel:
         lb = label(f"{emoji}  {title}", "cardTitle", wrap=True)

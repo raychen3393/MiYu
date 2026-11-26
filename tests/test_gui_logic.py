@@ -1076,12 +1076,12 @@ class PetGrowthTests(unittest.TestCase):
             self.assertEqual(A.win.pet._levelup_lv, 2)
             before, nb = g.xp, len(g.badges)
             A.say("发一条消息")
-            self.assertEqual(g.xp, before + 6 + 20 + 30 * (len(g.badges) - nb))   # 第一条消息 +20 打卡;新称号每个 +30
+            self.assertEqual(g.xp, before + 12 + 50 + 30 * (len(g.badges) - nb))  # 第一条消息 +12,打卡 +50,新称号每个 +30
             self.assertTrue(any("今日打卡" in t for t in A.systems("lobby")))
             self.assertEqual(g.messages, 1)
             before, nb = g.xp, len(g.badges)
             A.say("第二条")
-            self.assertEqual(g.xp, before + 6 + 30 * (len(g.badges) - nb))
+            self.assertEqual(g.xp, before + 12 + 30 * (len(g.badges) - nb))
             A.win._fill_fun_menu()
             labels = [a.text() for a in A.win.fun_menu.actions()]
             self.assertTrue(any("团团 · Lv.2" in t for t in labels))
@@ -1618,10 +1618,10 @@ class NewFeatureTests(unittest.TestCase):
         self.assertTrue(pump_until(self.all, lambda: not A.win.pet_away))
         self.assertTrue(any("没去成" in t for t in A.systems("dm:" + B.id)))
         B.win.allow_visits = True
-        # 撸宠物:加经验;连点 6 下会被嫌弃
+        # 撸宠物:加经验(+5);连点 6 下会被嫌弃
         xp, nb = A.win.pet_growth.xp, len(A.win.pet_growth.badges)
         A.win.pat_pet()
-        self.assertEqual(A.win.pet_growth.xp, xp + 2 + 30 * (len(A.win.pet_growth.badges) - nb))
+        self.assertEqual(A.win.pet_growth.xp, xp + 5 + 30 * (len(A.win.pet_growth.badges) - nb))
         A.win.pet._pats = []
         kinds = [A.win.pet.pat() for _ in range(6)]
         self.assertEqual(kinds[-1], "annoyed")
@@ -1707,12 +1707,12 @@ class NewFeatureTests(unittest.TestCase):
         from miyu import fun
         g = fun.PetGrowth()
         g.sent("2026-11-15")
-        self.assertIn(("今日打卡", 20), g.take_pending())
+        self.assertIn(("今日打卡", 50), g.take_pending())
         g.sent("2026-11-16")
         g.take_pending()
         g.sent("2026-11-17")
         got = g.take_pending()
-        self.assertIn(("连续打卡 3 天", 100), got)
+        self.assertIn(("连续打卡 3 天", 180), got)
         self.assertEqual(g.streak, 3)
         g.sent("2026-11-19")                                         # 断了一天
         self.assertEqual(g.streak, 1)
@@ -2738,7 +2738,7 @@ class V17Tests(unittest.TestCase):
         A.win.select_conv("lobby")
         A.say("可以复制的话")
         m = A.conv("lobby").messages[-1]
-        self.assertEqual(A.win.hover_actions(m), ["reply", "copy", "fav", "delete", "more"])
+        self.assertEqual(A.win.hover_actions(m), ["react:👍", "react:❤️", "react:😂", "reply", "copy", "fav", "delete", "more"])
         A.win.hover_bubble(A.win.bubbles[m.mid])
         self.assertTrue(A.win.hover_bar.isVisible())
         self.assertIs(A.win.hover_bar.bubble.msg, m)
@@ -2754,7 +2754,7 @@ class V17Tests(unittest.TestCase):
         burn = A.win._system                                 # 阅后即焚:不能复制、不能收藏
         A.say("焚", burn=10)
         mb = A.conv("lobby").messages[-1]
-        self.assertEqual(A.win.hover_actions(mb), ["reply", "delete", "more"])
+        self.assertEqual(A.win.hover_actions(mb), ["react:👍", "react:❤️", "react:😂", "reply", "delete", "more"])
         self.assertTrue(callable(burn))
 
     def test_03_pin_and_mute(self):
@@ -2964,7 +2964,7 @@ class V17Tests(unittest.TestCase):
         m = Msg("hi", sender=self.B.id, nick="七乙")
         A.win.pet_notice(A.conv("lobby"), m)
         self.assertGreater(A.win.desktop_win.pet._alert_t, 0)
-        self.assertEqual(A.win.desktop_win.pet._say[0], "有新消息~")
+        self.assertEqual(A.win.desktop_win.pet._say[0], "✉️ 有新消息~")
         A.win.restore_from_desktop()
         A.win.desktop_pet_sync()
         self.assertFalse(A.win.desktop_win.isVisible())
@@ -4554,8 +4554,10 @@ class BubbleFxTests(unittest.TestCase):
                 end = bf.enter_pose(mode, 1.0, mine)
                 self.assertEqual([round(x, 6) for x in end], [0, 0, 1, 0, 1])
         peak = max(bf.enter_pose("lively", k / 50, True)[2] for k in range(51))
+        soft_peak = max(bf.enter_pose("soft", k / 50, True)[2] for k in range(51))
         self.assertGreater(peak, 1.0)                                    # 活泼:冲过头再弹回来
-        self.assertLessEqual(max(bf.enter_pose("soft", k / 50, True)[2] for k in range(51)), 1.0)
+        self.assertLess(soft_peak, peak)                                 # 细腻:回弹幅度远小于活泼
+        self.assertLessEqual(soft_peak, 1.02)
 
     def test_enter_hides_then_releases(self):
         from miyu import bubblefx as bf, motion

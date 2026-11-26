@@ -103,7 +103,7 @@ def build_specs(w) -> list[Spec]:
             out = []
             for iid, name, lv, *_ in items:
                 ok = g.has(kind, iid, lv)
-                hint = "抽卡限定" if lv >= 99 else f"宠物 Lv.{lv} 或抽卡"
+                hint = "抽卡限定" if lv >= 900 else f"宠物 Lv.{lv} 或抽卡"
                 out.append((iid, name if ok else f"🔒 {name}  ·  {hint}", ok))
             return out
         return opts
@@ -263,12 +263,18 @@ def build_specs(w) -> list[Spec]:
              options=[(k, sp["label"]) for k, sp in SPECIES.items()] + [("", "不显示")],
              keys="小猫 小兔 小熊 卡皮巴拉 水豚 柴犬 小狐狸 小企鹅"),
         Spec("pet", "宠物", "名字和等级", kind="button", get=pet_line, action="改名…", set=w.rename_pet),
-        Spec("pet", "宠物", "衣橱、染色和形态", "帽子、衣服、自由染色、毛色、瞳色、2.5D小窝", action="打开…", set=w.show_wardrobe,
-             keys="装扮 换装 染色"),
+        Spec("pet", "宠物", "衣橱、染色和形态", "帽子、衣服、一键穿搭方案、自由染色、毛色、瞳色、2.5D小窝", action="打开…", set=w.show_wardrobe,
+             keys="装扮 换装 染色 穿搭 方案"),
         Spec("pet", "宠物", "每日签到与萌宠通行证", "每日签到和聊天活跃免费领经验、限定装扮和特殊动作", action="打开…",
              set=w.show_pet_pass, keys="签到 通行证 奖励 领奖"),
+        Spec("pet", "宠物", "合成大萌宠", "2.5D 物理合成大西瓜玩法,冲击「至臻金豚王」排行榜", action="开始玩…",
+             set=w.show_merge_game, keys="小游戏 合成 大西瓜 萌宠"),
         Spec("pet", "宠物", "接零食大作战", "25 秒轻互动小游戏,赢取宠物经验、心情与通行证积分", action="开始玩…",
              set=w.show_snack_game, keys="小游戏 接零食 互动"),
+        Spec("pet", "宠物", "专注番茄钟与喝水提醒", "萌宠戴眼镜伴学 + 灵动岛倒计时 + 定时喝水久坐提醒", action="开启…",
+             set=w.show_focus_dialog, keys="番茄钟 专注 喝水 久坐 倒计时"),
+        Spec("pet", "宠物", "萌宠双人合拍大头贴", "与好友/群宠生成 2.5D 拍立得贴纸合影 PNG 并一键发送", action="拍照…",
+             set=w.show_photobooth, keys="合影 大头贴 拍立得 照片"),
         Spec("pet", "宠物", "喂食和玩耍", "也可以直接右键点宠物", action="打开…",
              set=lambda: w.pet_menu(QCursor.pos()), keys="喂 饿"),
         Spec("pet", "收集", "成就墙和称号", "", action="查看…", set=w.show_wall,

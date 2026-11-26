@@ -323,10 +323,10 @@ def paint_3d_head_coat(p: QPainter, species: str, coat: str, body: QColor, inner
     else:
         p.drawEllipse(QPointF(hx, hy), rx, ry)
 
-    # 裁剪在头部球面内部画花纹与柔光高光
+    # 裁剪在头部球面内部画花纹与柔光高光(保留外层的桌边裁切,防止柴犬/企鹅/狐狸/奶牛花纹溢出到底边外面)
     clip = QPainterPath()
     clip.addEllipse(QPointF(hx, hy), rx - 0.8, ry - 0.8)
-    p.setClipPath(clip)
+    p.setClipPath(clip, Qt.ClipOperation.IntersectClip if p.hasClipping() else Qt.ClipOperation.ReplaceClip)
     p.setPen(Qt.PenStyle.NoPen)
 
     fx = cx + yaw * 9.5 + stretch_x * 0.72

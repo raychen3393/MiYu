@@ -245,11 +245,11 @@ def clean_title(v) -> str:
     return " ".join(str(v).split())[:8] if isinstance(v, str) else ""
 
 
-MAX_PET_LEVEL = 50
+MAX_PET_LEVEL = 100
 
 
 def clean_level(v) -> int:
-    """名字旁边的等级标识:1~50,其它一律不显示。"""
+    """名字旁边的等级标识:1~100,其它一律不显示。"""
     return v if type(v) is int and 1 <= v <= MAX_PET_LEVEL else 0
 
 

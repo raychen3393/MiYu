@@ -92,18 +92,30 @@ class PersonalizeDialog(Dialog):
         row.addStretch(1)
         lay.addLayout(row)
         row = QHBoxLayout()
-        row.addWidget(label("背景调暗", "faint"))
+        row.addWidget(label("遮罩暗度", "faint"))
         self.dim = QSlider(Qt.Orientation.Horizontal)
         self.dim.setRange(0, 80)
         self.dim.setValue(theme.CUSTOM.get(self.dim_key(), 0))
-        self.dim.valueChanged.connect(lambda v: self.queue(self.dim_key(), v, 90))
+        self.dim.valueChanged.connect(self._on_dim_changed)
         self.dim.sliderReleased.connect(self.flush)
         row.addWidget(self.dim, 1)
-        self.blur = QCheckBox("模糊")
-        self.blur.setChecked(bool(theme.CUSTOM.get("bg_blur", True)))
-        self.blur.toggled.connect(lambda on: self.set_value("bg_blur", on))
-        row.addWidget(self.blur)
+        self.dim_val = label(f"{self.dim.value()}%", "faint")
+        self.dim_val.setFixedWidth(36)
+        row.addWidget(self.dim_val)
         lay.addLayout(row)
+
+        brow = QHBoxLayout()
+        brow.addWidget(label("壁纸模糊", "faint"))
+        self.blur_slider = QSlider(Qt.Orientation.Horizontal)
+        self.blur_slider.setRange(0, 24)
+        self.blur_slider.setValue(int(theme.CUSTOM.get("bg_blur_px", 12 if theme.CUSTOM.get("bg_blur", True) else 0)))
+        self.blur_slider.valueChanged.connect(self._on_blur_changed)
+        self.blur_slider.sliderReleased.connect(self.flush)
+        brow.addWidget(self.blur_slider, 1)
+        self.blur_val = label(f"{self.blur_slider.value()}px", "faint")
+        self.blur_val.setFixedWidth(36)
+        brow.addWidget(self.blur_val)
+        lay.addLayout(brow)
 
         prev = QFrame()
         prev.setObjectName("plainCard")
@@ -187,9 +199,23 @@ class PersonalizeDialog(Dialog):
         self.dim.blockSignals(True)                         # 自己的背景图和渐变壁纸各记各的调暗程度
         self.dim.setValue(theme.CUSTOM.get(self.dim_key(), 0))
         self.dim.blockSignals(False)
-        self.dim.setToolTip("调暗你选的背景图" if custom else "调暗主题自带的渐变壁纸")
-        self.blur.setEnabled(custom)
-        self.blur.setToolTip("" if custom else "只对自己选的背景图有效(渐变壁纸本来就是柔和的)")
+        self.dim_val.setText(f"{self.dim.value()}%")
+        self.dim.setToolTip("调暗你选的背景图(提高前景毛玻璃与文字对比度)" if custom else "调暗主题自带的渐变壁纸")
+        self.blur_slider.setEnabled(custom)
+        bpx = int(theme.CUSTOM.get("bg_blur_px", 12 if theme.CUSTOM.get("bg_blur", True) else 0))
+        self.blur_slider.blockSignals(True)
+        self.blur_slider.setValue(bpx)
+        self.blur_slider.blockSignals(False)
+        self.blur_val.setText(f"{bpx}px" if custom else "默认")
+        self.blur_slider.setToolTip("调节自定义背景图模糊度(0=原图清晰, 24=奶油毛玻璃)" if custom else "只对自己选的背景图有效")
+
+    def _on_dim_changed(self, v: int) -> None:
+        self.dim_val.setText(f"{v}%")
+        self.queue(self.dim_key(), v, 90)
+
+    def _on_blur_changed(self, v: int) -> None:
+        self.blur_val.setText(f"{v}px")
+        self.queue("bg_blur_px", v, 110)
 
     @staticmethod
     def dim_key() -> str:
@@ -237,16 +263,13 @@ class PersonalizeDialog(Dialog):
 
     def reset(self) -> None:
         self.win.apply_personalize({"accent": "", "bubble": "", "glass": 50, "bg_dim": 35, "bg_blur": True,
-                                    "wall_dim": 0},
+                                    "bg_blur_px": 12, "wall_dim": 0},
                                    rebuild=True)
-        for w, v in ((self.glass, 50), (self.dim, theme.CUSTOM.get(self.dim_key(), 0))):
+        for w, v in ((self.glass, 50), (self.dim, theme.CUSTOM.get(self.dim_key(), 0)), (self.blur_slider, 12)):
             w.blockSignals(True)
             w.setValue(v)
             w.blockSignals(False)
         self._pending.clear()
-        self.blur.blockSignals(True)
-        self.blur.setChecked(True)
-        self.blur.blockSignals(False)
         self.refresh()
 
     def accept(self) -> None:

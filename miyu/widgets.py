@@ -116,6 +116,7 @@ class ChatInput(QPlainTextEdit):
     files = Signal(object)
     at_typed = Signal()
     keystroke = Signal(str)                  # "char" / "delete" / "enter",给打字宠物和火花用
+    focus_changed = Signal(bool)             # 3.7: 输入胶囊聚焦呼吸边框联动
 
     def __init__(self) -> None:
         super().__init__()
@@ -128,6 +129,14 @@ class ChatInput(QPlainTextEdit):
         self.last_key_repeat = False     # 上一次按键是否为长按自动连发(30 级以上拦截刷经验用)
         self.textChanged.connect(self._fit)
         self._fit()
+
+    def focusInEvent(self, e) -> None:
+        super().focusInEvent(e)
+        self.focus_changed.emit(True)
+
+    def focusOutEvent(self, e) -> None:
+        super().focusOutEvent(e)
+        self.focus_changed.emit(False)
 
     def set_hint(self, text: str) -> None:
         """设置灰色提示文字。拼音输入期间不显示,否则会和拼音叠在一起(Qt 的已知问题)。"""
@@ -259,6 +268,7 @@ class ClickLabel(QLabel):
 
 
 GIF_LABELS: "weakref.WeakSet[GifLabel]" = weakref.WeakSet()     # 聊天里所有会动的图(看不见时暂停)
+AURA_BUBBLES: "weakref.WeakSet[Bubble]" = weakref.WeakSet()     # 聊天里带动态边缘特效的气泡(滚出视野或最小化时暂停)
 
 
 class GifLabel(ClickLabel):
@@ -327,12 +337,22 @@ class GifLabel(ClickLabel):
 
 class DblLabel(QLabel):
     double_clicked = Signal()
+    hovered = Signal()
+    unhovered = Signal()
 
     def mouseDoubleClickEvent(self, e) -> None:
         left = e.button() == Qt.MouseButton.LeftButton
         super().mouseDoubleClickEvent(e)
         if left:
             self.double_clicked.emit()
+
+    def enterEvent(self, e) -> None:
+        super().enterEvent(e)
+        self.hovered.emit()
+
+    def leaveEvent(self, e) -> None:
+        super().leaveEvent(e)
+        self.unhovered.emit()
 
 
 class ClickFrame(QFrame):
@@ -818,108 +838,138 @@ def paint_bubble_aura(p: QPainter, r: QRectF, aura: str, t: float) -> None:
         return r.left(), r.bottom() - d
 
     if aura in ("flame", "dragon", "eternal"):
-        c_outer = QColor("#FF4D00") if aura == "flame" else (QColor("#AE3EC9") if aura == "dragon" else QColor("#FAB005"))
-        c_inner = QColor("#FFD43B") if aura != "dragon" else QColor("#FF6B6B")
-        # 多层暖光外晕
-        for idx, (grow, alpha, width) in enumerate(((2.6, 85, 5.2), (1.0, 175, 2.4))):
-            col = QColor(c_outer if idx == 0 else c_inner)
-            col.setAlpha(int(alpha * (0.78 + 0.22 * pulse)))
-            p.setPen(QPen(col, width))
+        c_outer = QColor("#FF2E00") if aura == "flame" else (QColor("#9C36B5") if aura == "dragon" else QColor("#E67700"))
+        c_mid = QColor("#FF7A00") if aura == "flame" else (QColor("#FF4D6D") if aura == "dragon" else QColor("#FFD43B"))
+        c_core = QColor("#FFF3BF") if aura != "dragon" else QColor("#FFE3EC")
+
+        def _flame_tongue(bx: float, by: float, fw: float, fh: float, sway: float, ang_deg: float = 0.0) -> None:
+            p.save()
+            p.translate(bx, by)
+            if ang_deg:
+                p.rotate(ang_deg)
+            # 外焰尖角火舌(贝塞尔水滴尖端)
+            fp = QPainterPath(QPointF(-fw, 0.0))
+            fp.cubicTo(-fw * 1.05, -fh * 0.45, sway * 0.5 - fw * 0.35, -fh * 0.78, sway, -fh)
+            fp.cubicTo(sway * 0.5 + fw * 0.35, -fh * 0.78, fw * 1.05, -fh * 0.45, fw, 0.0)
+            fp.closeSubpath()
+            g = QLinearGradient(QPointF(0, 0), QPointF(sway, -fh))
+            c0, c1, c2 = QColor(c_core), QColor(c_mid), QColor(c_outer)
+            c0.setAlpha(235)
+            c1.setAlpha(220)
+            c2.setAlpha(150)
+            g.setColorAt(0.0, c0)
+            g.setColorAt(0.45, c1)
+            g.setColorAt(1.0, c2)
+            p.setBrush(QBrush(g))
+            p.drawPath(fp)
+            p.restore()
+
+        # 三层暖光外晕边框(完全在气泡外沿,不遮挡文字)
+        for grow, alpha, width, col in ((4.8, 105, 7.5, c_outer), (2.5, 195, 4.0, c_mid), (0.8, 240, 2.0, c_core)):
+            c = QColor(col)
+            c.setAlpha(int(alpha * (0.84 + 0.16 * pulse)))
+            p.setPen(QPen(c, width))
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawRoundedRect(r.adjusted(-grow, -grow, grow, grow), rad + grow * 0.6, rad + grow * 0.6)
-        # 顶部与两侧动态摇曳火舌 + 上升飞溅火星
+
+        # 气泡顶边真实摇曳尖角火舌 + 飞溅火星
         p.setPen(Qt.PenStyle.NoPen)
-        count = max(8, min(18, int(r.width() / 22)))
+        count = max(9, min(20, int(r.width() / 16)))
         for i in range(count):
-            ph = (t * (1.35 + (i % 3) * 0.25) + i * 0.37) % 1.0
-            fx = r.left() + 10 + (r.width() - 20) * ((i + 0.5) / count) + math.sin(t * 7 + i * 2.1) * 3.0
-            fy = r.top() - 1.0 - ph * 11.0
-            sc = (1.0 - ph)
-            fc = QColor(c_outer if ph > 0.45 else c_inner)
-            fc.setAlphaF(max(0.0, sc * 0.92))
-            p.setBrush(fc)
-            p.drawEllipse(QPointF(fx, fy), 2.4 * sc + 0.8, 3.8 * sc + 0.8)
+            ph = (t * (1.5 + (i % 3) * 0.28) + i * 0.37) % 1.0
+            fx = r.left() + 10 + (r.width() - 20) * ((i + 0.5) / count)
+            fh = 8.5 + 8.0 * (0.5 + 0.5 * math.sin(t * 7.5 + i * 2.3))
+            fw = 3.2 + 1.4 * (i % 2)
+            sway = math.sin(t * 8.5 + i * 1.9) * 4.2
+            _flame_tongue(fx, r.top() + 1.0, fw, fh, sway)
             if i % 2 == 0:
-                sx = fx + math.sin(t * 9 + i * 3.3) * 6.0
-                sy = r.top() - 3.0 - ph * 16.0
-                sp = QColor("#FFF3BF")
-                sp.setAlphaF(max(0.0, (1.0 - ph) * 0.95))
+                sx = fx + math.sin(t * 9.5 + i * 3.1) * 7.5
+                sy = r.top() - 4.0 - ph * 17.0
+                sp = QColor(c_core if ph < 0.5 else c_mid)
+                sp.setAlphaF(max(0.0, (1.0 - ph) * 0.96))
                 p.setBrush(sp)
-                p.drawEllipse(QPointF(sx, sy), 1.3, 1.3)
+                p.drawEllipse(QPointF(sx, sy), 1.8 * (1 - ph * 0.4), 1.8 * (1 - ph * 0.4))
+        # 左右两侧斜向舔舐小火舌
+        for side in (-1, 1):
+            ex = r.left() - 0.5 if side < 0 else r.right() + 0.5
+            for j in range(3):
+                ey = r.top() + 10 + (r.height() - 18) * (j / 2.0)
+                fh = 6.5 + 4.5 * (0.5 + 0.5 * math.sin(t * 8.0 + j * 2.4 + side))
+                sway = math.sin(t * 7.0 + j * 1.7) * 2.4
+                _flame_tongue(ex, ey, 2.6, fh, sway, ang_deg=-52.0 if side < 0 else 52.0)
 
     elif aura == "lightning":
-        glow = QColor(51, 154, 240, int(90 + 60 * pulse))
-        p.setPen(QPen(glow, 4.0))
+        glow = QColor(34, 139, 230, int(135 + 75 * pulse))
+        p.setPen(QPen(glow, 5.2))
         p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawRoundedRect(r.adjusted(-1.5, -1.5, 1.5, 1.5), rad, rad)
-        # 沿边框跳跃的锯齿电弧
-        for k in range(3):
-            base = (t * 0.55 + k * 0.33) % 1.0
+        p.drawRoundedRect(r.adjusted(-2.2, -2.2, 2.2, 2.2), rad + 1, rad + 1)
+        for k in range(4):
+            base = (t * 0.62 + k * 0.25) % 1.0
             pts = []
-            for j in range(6):
-                px, py = _perimeter_pt(base + j * 0.028)
-                jit = math.sin(t * 42 + j * 5.7 + k * 3.1) * 3.8
-                pts.append(QPointF(px + jit, py - jit * 0.7))
-            p.setPen(QPen(QColor("#74C0FC"), 2.4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            for j in range(7):
+                px, py = _perimeter_pt(base + j * 0.032)
+                jit = math.sin(t * 46 + j * 5.7 + k * 3.1) * 4.8
+                pts.append(QPointF(px + jit, py - jit * 0.8))
+            p.setPen(QPen(QColor("#339AF0"), 3.2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
             for j in range(len(pts) - 1):
                 p.drawLine(pts[j], pts[j + 1])
-            p.setPen(QPen(QColor("#FFFFFF"), 1.1))
+            p.setPen(QPen(QColor("#FFFFFF"), 1.4))
             for j in range(len(pts) - 1):
                 p.drawLine(pts[j], pts[j + 1])
 
     elif aura in ("neon", "prism", "aurora"):
         for k in range(2):
-            c = (QColor.fromHsv(int((t * 90 + k * 140) % 360), 210, 255) if aura == "prism" else
-                 QColor("#22B8CF" if k == 0 else "#CC5DE8") if aura == "neon" else
-                 QColor("#51CF66" if k == 0 else "#20C997"))
-            c.setAlpha(int((115 if k == 0 else 185) * (0.75 + 0.25 * pulse)))
-            p.setPen(QPen(c, 4.2 if k == 0 else 2.0))
+            c = (QColor.fromHsv(int((t * 95 + k * 140) % 360), 225, 255) if aura == "prism" else
+                 QColor("#00D2FF" if k == 0 else "#D633FF") if aura == "neon" else
+                 QColor("#2F9E44" if k == 0 else "#20C997"))
+            c.setAlpha(int((145 if k == 0 else 225) * (0.78 + 0.22 * pulse)))
+            p.setPen(QPen(c, 5.5 if k == 0 else 2.6))
             p.setBrush(Qt.BrushStyle.NoBrush)
-            p.drawRoundedRect(r.adjusted(-2.0 + k, -2.0 + k, 2.0 - k, 2.0 - k), rad + 1, rad + 1)
+            p.drawRoundedRect(r.adjusted(-3.0 + k * 1.4, -3.0 + k * 1.4, 3.0 - k * 1.4, 3.0 - k * 1.4), rad + 1.5, rad + 1.5)
         p.setPen(Qt.PenStyle.NoPen)
-        for i in range(6):
-            px, py = _perimeter_pt((t * 0.22 + i / 6.0) % 1.0)
-            sc = QColor.fromHsv(int((t * 120 + i * 60) % 360), 180, 255) if aura == "prism" else QColor("#FFFFFF")
-            sc.setAlpha(210)
+        for i in range(8):
+            px, py = _perimeter_pt((t * 0.24 + i / 8.0) % 1.0)
+            sc = QColor.fromHsv(int((t * 120 + i * 45) % 360), 200, 255) if aura == "prism" else QColor("#FFFFFF")
+            sc.setAlpha(235)
             p.setBrush(sc)
-            p.drawEllipse(QPointF(px, py), 2.1, 2.1)
+            p.drawEllipse(QPointF(px, py), 2.8, 2.8)
 
     else:
         # bubble / sakura / frost / heart / galaxy
-        cols = {"bubble": "#74C0FC", "sakura": "#FF8FAB", "frost": "#A5D8FF", "heart": "#FF6B8A", "galaxy": "#9775FA"}
-        base_c = QColor(cols.get(aura, "#74C0FC"))
+        cols = {"bubble": "#339AF0", "sakura": "#F06595", "frost": "#4DABF7", "heart": "#FA5252", "galaxy": "#7950F2"}
+        base_c = QColor(cols.get(aura, "#339AF0"))
         g_c = QColor(base_c)
-        g_c.setAlpha(int(95 + 65 * pulse))
-        p.setPen(QPen(g_c, 2.4))
+        g_c.setAlpha(int(135 + 85 * pulse))
+        p.setPen(QPen(g_c, 3.4))
         p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawRoundedRect(r.adjusted(-1.5, -1.5, 1.5, 1.5), rad, rad)
-        for i in range(7):
-            ph = (t * 0.26 + i / 7.0) % 1.0
+        p.drawRoundedRect(r.adjusted(-2.2, -2.2, 2.2, 2.2), rad + 1, rad + 1)
+        for i in range(9):
+            ph = (t * 0.28 + i / 9.0) % 1.0
             px, py = _perimeter_pt(ph)
-            px += math.sin(t * 2.5 + i * 1.9) * 3.2
-            py += math.cos(t * 2.2 + i * 1.7) * 3.2 - (ph * 4.0 if aura in ("bubble", "heart") else 0.0)
+            px += math.sin(t * 2.6 + i * 1.9) * 4.5
+            py += math.cos(t * 2.3 + i * 1.7) * 4.5 - (ph * 6.0 if aura in ("bubble", "heart") else 0.0)
             if aura == "bubble":
-                p.setPen(QPen(QColor(165, 216, 255, 220), 1.0))
-                p.setBrush(QColor(255, 255, 255, 70))
-                p.drawEllipse(QPointF(px, py), 3.0, 3.0)
+                p.setPen(QPen(QColor("#339AF0"), 1.4))
+                p.setBrush(QColor(210, 240, 255, 130))
+                p.drawEllipse(QPointF(px, py), 4.0, 4.0)
             elif aura == "sakura":
-                p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(QColor(255, 182, 206, 220))
-                p.drawEllipse(QPointF(px, py), 3.4, 2.0)
+                p.setPen(QPen(QColor("#E64980"), 0.8))
+                p.setBrush(QColor("#FF8FAB"))
+                p.drawEllipse(QPointF(px, py), 4.4, 2.6)
             elif aura == "frost":
-                p.setPen(QPen(QColor(220, 244, 255, 230), 1.1))
-                p.drawLine(QPointF(px - 2.8, py), QPointF(px + 2.8, py))
-                p.drawLine(QPointF(px, py - 2.8), QPointF(px, py + 2.8))
+                p.setPen(QPen(QColor("#1C7ED6"), 1.5))
+                p.drawLine(QPointF(px - 3.8, py), QPointF(px + 3.8, py))
+                p.drawLine(QPointF(px, py - 3.8), QPointF(px, py + 3.8))
             elif aura == "heart":
                 p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(QColor(255, 107, 138, 220))
-                p.drawEllipse(QPointF(px - 1.5, py), 2.0, 2.0)
-                p.drawEllipse(QPointF(px + 1.5, py), 2.0, 2.0)
-                p.drawPolygon([QPointF(px - 3.3, py + 0.6), QPointF(px + 3.3, py + 0.6), QPointF(px, py + 4.2)])
+                p.setBrush(QColor("#FF4D6D"))
+                p.drawEllipse(QPointF(px - 2.0, py), 2.6, 2.6)
+                p.drawEllipse(QPointF(px + 2.0, py), 2.6, 2.6)
+                p.drawPolygon([QPointF(px - 4.4, py + 0.8), QPointF(px + 4.4, py + 0.8), QPointF(px, py + 5.5)])
             else:  # galaxy
                 p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(QColor("#FFF3BF" if i % 2 == 0 else "#B197FC"))
-                p.drawEllipse(QPointF(px, py), 2.1, 2.1)
+                p.setBrush(QColor("#FFD43B" if i % 2 == 0 else "#9775FA"))
+                p.drawEllipse(QPointF(px, py), 2.9, 2.9)
     p.restore()
 
 
@@ -934,6 +984,8 @@ class Bubble(QWidget):
     select_toggled = Signal(object)                # 多选时点了勾选框
     hovered = Signal(object)                       # 鼠标移进 / 移出这条消息(显示快捷操作条)
     unhovered = Signal(object)
+    avatar_hover = Signal(str, object)             # 3.7: 悬停群友头像弹出毛玻璃名片 (peer_id, global_pos)
+    avatar_leave = Signal()
     AV = 30
 
     def __init__(self, msg: Msg, show_head: bool, group: bool, maxw: int, transfer: dict | None = None,
@@ -963,14 +1015,17 @@ class Bubble(QWidget):
         align = Qt.AlignmentFlag.AlignRight if mine else Qt.AlignmentFlag.AlignLeft
         row = QHBoxLayout(self)
         self._row = row
-        pad_v = 7 if (msg.aura and not msg.gone) else 0
-        row.setContentsMargins(18, self.top_gap(grp, show_head) + pad_v, 18, 1 + pad_v)
+        pad_v = 13 if (msg.aura and not msg.gone) else 0
+        self._aura_pad_v = pad_v
+        row.setContentsMargins(20, self.top_gap(grp, show_head) + pad_v, 20, 2 + pad_v)
         row.setSpacing(8)
         self._aura_timer: QTimer | None = None
+        self._aura_active = True
         if msg.aura and not msg.gone:
             self._aura_timer = QTimer(self)
             self._aura_timer.setInterval(36)
             self._aura_timer.timeout.connect(self.update)
+            AURA_BUBBLES.add(self)
         self.setToolTip(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(msg.time)))
         self.sel_btn = QPushButton("")
         self.sel_btn.setObjectName("selBox")
@@ -993,6 +1048,8 @@ class Bubble(QWidget):
                     av.setPixmap(peer_avatar(msg.sender, msg.nick, self.AV))
                     av.setToolTip(f"{msg.nick}  #{msg.tag}\n双击戳一戳")
                     av.double_clicked.connect(lambda: self.poke.emit(self.msg))
+                    av.hovered.connect(lambda pid=msg.sender, w=av: self.avatar_hover.emit(pid, w.mapToGlobal(QPoint(w.width() + 6, 0))))
+                    av.unhovered.connect(self.avatar_leave.emit)
                     self.av = av
             row.addWidget(av, 0, Qt.AlignmentFlag.AlignBottom)
         if mine:
@@ -1120,7 +1177,8 @@ class Bubble(QWidget):
             self.body.setProperty("grp", grp if grp != "single" else None)
             repolish(self.body)
         m = self._row.contentsMargins()
-        self._row.setContentsMargins(m.left(), self.top_gap(grp), m.right(), m.bottom())
+        pad_v = getattr(self, "_aura_pad_v", 0)
+        self._row.setContentsMargins(m.left(), self.top_gap(grp) + pad_v, m.right(), m.bottom())
 
     def _name_row(self, msg: Msg) -> QWidget:
         """群聊里名字那一行:昵称 · #标签,后面是等级标识和佩戴的称号。"""
@@ -1144,9 +1202,22 @@ class Bubble(QWidget):
             lay.addWidget(t)
         return w
 
+    def set_aura_active(self, on: bool) -> None:
+        """按视野与窗口可见性启停边缘粒子计时器,滚出屏幕或最小化时零 CPU 占用。"""
+        on = bool(on) and bool(self.msg.aura) and not self.msg.gone
+        self._aura_active = on
+        t = getattr(self, "_aura_timer", None)
+        if t is None:
+            return
+        if on and self.isVisible():
+            if not t.isActive():
+                t.start()
+        elif t.isActive():
+            t.stop()
+
     def showEvent(self, e) -> None:
         super().showEvent(e)
-        if getattr(self, "_aura_timer", None) is not None and self.msg.aura and not self.msg.gone:
+        if getattr(self, "_aura_timer", None) is not None and self._aura_active and self.msg.aura and not self.msg.gone:
             self._aura_timer.start()
 
     def hideEvent(self, e) -> None:
@@ -1156,6 +1227,9 @@ class Bubble(QWidget):
 
     def paintEvent(self, e) -> None:
         super().paintEvent(e)
+        if self.msg.gone and getattr(self, "_aura_timer", None) is not None and self._aura_timer.isActive():
+            self._aura_timer.stop()
+            return
         aura = getattr(self.msg, "aura", "")
         if aura and not self.msg.system and not self.msg.gone:
             w = self.content_widget()
@@ -1621,6 +1695,9 @@ class ChatPanel(QWidget):
         if self.header is not None:
             self.header.setGeometry(0, 0, self.width(), HEADER_H)
             self.header.raise_()
+        if getattr(self, "island", None) is not None:
+            self.island.place()
+            self.island.raise_()
         if self.pet is not None and self.pill is not None:
             tl = self.pill.mapTo(self, QPoint(0, 0))
             self.pet.move(tl.x() + self.pill.width() - self.pet.W - 44, tl.y() - self.pet.EDGE + 1)
@@ -1808,19 +1885,27 @@ class ConvDelegate(QStyledItemDelegate):
         r = QRectF(option.rect).adjusted(5 if compact else 6, 3, -5 if compact else -6, -3)
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
         hover = bool(option.state & QStyle.StateFlag.State_MouseOver)
-        if selected and not theme.is_dark():          # 浅色:选中项是一张带柔和阴影的白色卡片
+        if selected and not theme.is_dark():          # 浅色:选中项是带液态玻璃顶光与柔和阴影的圆角卡片
             soft_shadow(painter, r, 11, 26, 6, 1.5)
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor("#FFFFFF"))
+            bg = QLinearGradient(r.topLeft(), r.bottomLeft())
+            bg.setColorAt(0.0, QColor("#FFFFFF"))
+            bg.setColorAt(1.0, QColor("#F6F8FC"))
+            painter.setPen(QPen(QColor(255, 255, 255, 220), 1.0))
+            painter.setBrush(QBrush(bg))
             painter.drawRoundedRect(r, 11, 11)
         elif selected or hover:
-            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setPen(QPen(QColor(255, 255, 255, 36), 1.0) if selected else Qt.PenStyle.NoPen)
             painter.setBrush(qcolor(T["select"] if selected else T["hover"]))
             painter.drawRoundedRect(r, 11, 11)
         elif conv.pinned:                              # 置顶的会话:淡淡的底色
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(qcolor(T["btn2"]))
             painter.drawRoundedRect(r, 11, 11)
+        if selected:                                   # 3.7: 左侧 3px 圆润主题色指示条
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(T["accent"]))
+            bar_h = min(26.0, r.height() * 0.48)
+            painter.drawRoundedRect(QRectF(r.left() + 2.0, r.center().y() - bar_h / 2.0, 3.2, bar_h), 1.6, 1.6)
 
         if compact:
             av = 40
@@ -1902,7 +1987,14 @@ class ConvDelegate(QStyledItemDelegate):
             badge_w = max(18, QFontMetrics(bf).horizontalAdvance(txt) + 11)
             br = QRectF(right - badge_w, r.top() + 34, badge_w, 18)
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(T["faint"] if conv.muted else T["badge"]))
+            if conv.muted:
+                painter.setBrush(QColor(T["faint"]))
+            else:
+                bc = QColor(T["badge"])
+                bg_b = QLinearGradient(br.topLeft(), br.bottomRight())
+                bg_b.setColorAt(0.0, bc.lighter(120))
+                bg_b.setColorAt(1.0, bc)
+                painter.setBrush(QBrush(bg_b))
             painter.drawRoundedRect(br, 9, 9)
             painter.setFont(bf)
             painter.setPen(QColor(theme.text_on(T["badge"]) if not conv.muted and theme.valid_hex(T["badge"]) else "#FFFFFF"))
@@ -1973,3 +2065,153 @@ class MemberDelegate(QStyledItemDelegate):
         painter.drawText(QRectF(left + name_w + 6, r.top(), tag_w + 2, r.height()), tag,
                          _text_opt(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter))
         painter.restore()
+
+
+class StickyDatePill(QWidget):
+    """3.7 悬浮日期胶囊:滚动历史消息时在聊天区顶部柔和浮出当前日期,停止滚动 1.2s 后自动淡出。"""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self._text = ""
+        self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.setInterval(1250)
+        self._hide_timer.timeout.connect(self.hide)
+        self.hide()
+
+    def show_date(self, text: str) -> None:
+        if not text:
+            return
+        self._text = text
+        f = QFont(self.font())
+        f.setPixelSize(11)
+        f.setWeight(QFont.Weight.DemiBold)
+        tw = QFontMetrics(f).horizontalAdvance(text) + 26
+        self.setFixedSize(max(64, tw), 24)
+        self.place()
+        self.show()
+        self.raise_()
+        self.update()
+        self._hide_timer.start()
+
+    def place(self) -> None:
+        par = self.parentWidget()
+        if par is None:
+            return
+        y = HEADER_H + 10
+        if getattr(par, "notice", None) is not None and par.notice.isVisible():
+            y += 44
+        if getattr(par, "search", None) is not None and par.search.isVisible():
+            y += 48
+        isl = getattr(par, "island", None)
+        if isl is not None and isl.isVisible() and isl.y() >= HEADER_H:
+            y = max(y, isl.y() + isl.height() + 6)
+        self.move(max(12, (par.width() - self.width()) // 2), y)
+
+    def paintEvent(self, _e) -> None:
+        if not self._text:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        r = QRectF(0.5, 0.5, self.width() - 1.0, self.height() - 1.0)
+        dark = theme.is_dark()
+        p.setPen(QPen(QColor(255, 255, 255, 52 if dark else 190), 1.0))
+        p.setBrush(QColor(24, 27, 40, 208) if dark else QColor(255, 255, 255, 224))
+        p.drawRoundedRect(r, 12, 12)
+        f = QFont(self.font())
+        f.setPixelSize(11)
+        f.setWeight(QFont.Weight.DemiBold)
+        p.setFont(f)
+        p.setPen(QColor(T["text"]))
+        p.drawText(r, self._text, _text_opt(Qt.AlignmentFlag.AlignCenter))
+        p.end()
+
+
+class PeerHoverCard(QFrame):
+    """3.7 悬停头像毛玻璃迷你名片卡:展示群友的 2.5D 萌宠、等级、称号,支持一键私聊/串门/合拍。"""
+    action = Signal(str, str)        # (kind: dm / visit / photo, peer_id)
+    entered = Signal()
+    left = Signal()
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent, Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint
+                         | Qt.WindowType.NoDropShadowWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setFixedWidth(264)
+        self._pid = ""
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.card = QFrame(self)
+        self.card.setObjectName("bentoPopup")
+        outer.addWidget(self.card)
+        lay = QVBoxLayout(self.card)
+        lay.setContentsMargins(14, 12, 14, 12)
+        lay.setSpacing(8)
+        top = QHBoxLayout()
+        top.setSpacing(10)
+        self.pet_lab = QLabel(self.card)
+        self.pet_lab.setFixedSize(78, 54)
+        self.pet_lab.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        top.addWidget(self.pet_lab)
+        col = QVBoxLayout()
+        col.setSpacing(2)
+        self.name_lab = label("", "cardTitle")
+        self.meta_lab = label("", "fileSub", wrap=True)
+        self.badge_lab = label("", "subtitleAccent")
+        col.addWidget(self.name_lab)
+        col.addWidget(self.meta_lab)
+        col.addWidget(self.badge_lab)
+        top.addLayout(col, 1)
+        lay.addLayout(top)
+        brow = QHBoxLayout()
+        brow.setSpacing(6)
+        self.dm_btn = button("私聊", "primary", lambda: self._fire("dm"), 68)
+        self.visit_btn = button("串门", "", lambda: self._fire("visit"), 68)
+        self.photo_btn = button("📸 合拍", "", lambda: self._fire("photo"), 76)
+        for b in (self.dm_btn, self.visit_btn, self.photo_btn):
+            b.setMinimumHeight(28)
+            brow.addWidget(b)
+        lay.addLayout(brow)
+        self.hide()
+
+    def _fire(self, kind: str) -> None:
+        pid = self._pid
+        self.hide()
+        if pid:
+            self.action.emit(kind, pid)
+
+    def show_peer(self, pid: str, nick: str, tag: str, online: bool, level: int, title: str,
+                  pet_pm: QPixmap | None, global_pos: QPoint) -> None:
+        self._pid = pid
+        self.name_lab.setText(nick[:14])
+        st = "🟢 在线" if online else "⚪ 离线"
+        self.meta_lab.setText(f"#{tag}  ·  {st}")
+        lv_txt = f"Lv.{level}" if level > 0 else "Lv.1"
+        self.badge_lab.setText(f"{lv_txt}" + (f"  ·  「{title}」" if title else ""))
+        if pet_pm is not None and not pet_pm.isNull():
+            self.pet_lab.setPixmap(pet_pm.scaled(76, 52, Qt.AspectRatioMode.KeepAspectRatio,
+                                                 Qt.TransformationMode.SmoothTransformation))
+        else:
+            self.pet_lab.setPixmap(peer_avatar(pid, nick, 46))
+        self.adjustSize()
+        x, y = global_pos.x(), global_pos.y()
+        scr = self.screen()
+        if scr is not None:
+            geo = scr.availableGeometry()
+            if x + self.width() > geo.right() - 8:
+                x = max(geo.left() + 8, global_pos.x() - self.width() - 42)
+            y = max(geo.top() + 8, min(y, geo.bottom() - self.height() - 8))
+        self.move(x, y)
+        self.show()
+        self.raise_()
+
+    def enterEvent(self, e) -> None:
+        super().enterEvent(e)
+        self.entered.emit()
+
+    def leaveEvent(self, e) -> None:
+        super().leaveEvent(e)
+        self.left.emit()

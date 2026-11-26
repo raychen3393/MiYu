@@ -10,12 +10,13 @@
 """
 from __future__ import annotations
 
+import math
 import random
 import sys
 import time
 
-from PySide6.QtCore import QPoint, QRectF, Qt, QTimer
-from PySide6.QtGui import QColor, QGuiApplication, QPainter
+from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, QTimer
+from PySide6.QtGui import QBrush, QColor, QFont, QGuiApplication, QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient, QTextOption
 from PySide6.QtWidgets import (
     QFrame, QGridLayout, QHBoxLayout, QLineEdit, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea,
     QStackedWidget, QVBoxLayout, QWidget,
@@ -24,15 +25,17 @@ from PySide6.QtWidgets import (
 from ..dialogs import Dialog, TextDialog, info, prompt
 from ..fun import (
     ACC_BY_ID, ACCESSORIES, ANTI_HOLD_LEVEL, DYE_PRESETS, OUTFITS, SLOTS, SPECIAL_TRICKS, SPECIES, TRICKS, PetGrowth,
-    TypingPet,
+    TypingPet, star_path,
 )
 from ..pet3d import COATS, EYE_STYLES, ROOMS
 from ..petcare import (
     EXPRESSIONS, FOOD_BY_ID, FOODS, FORMS, GP_DAILY_FEEDS, GP_MSG_XP, GP_SPECIES, TOY_BY_ID, TOYS, GroupPet,
     form_of, next_form,
 )
+from ..petmerge import MergePetDialog
 from ..petpass import CloudJumpDialog, PassDialog, SnackCatchDialog, can_checkin
-from ..theme import T
+from ..petphoto import PhotoBoothDialog
+from ..theme import T, is_dark
 from ..ui import button, label, make_menu, popup
 from ..widgets import Conv
 from .pet import PetHit
@@ -261,8 +264,11 @@ class DesktopPet(QWidget):
         lk.triggered.connect(self.win.set_desktop_locked)
         m.addSeparator()
         m.addAction("🎁  每日签到与通行证…", lambda: (self.win.restore_from_desktop(), self.win.show_pet_pass()))
+        m.addAction("🍉  合成大萌宠…", lambda: (self.win.restore_from_desktop(), self.win.show_merge_game()))
         m.addAction("🎮  接零食小游戏…", lambda: (self.win.restore_from_desktop(), self.win.show_snack_game()))
         m.addAction("☁️  云端跳跳乐…", lambda: (self.win.restore_from_desktop(), self.win.show_cloud_game()))
+        m.addAction("🍅  专注番茄钟 / 喝水提醒…", lambda: (self.win.restore_from_desktop(), self.win.show_focus_dialog()))
+        m.addAction("📸  萌宠双人合拍大头贴…", lambda: (self.win.restore_from_desktop(), self.win.show_photobooth()))
         m.addAction("👗  2.5D 潮玩衣橱…", lambda: (self.win.restore_from_desktop(), self.win.show_wardrobe()))
         m.addAction("💬  自定义台词与下班倒计时…", lambda: (self.win.restore_from_desktop(), self.win.show_pet_custom()))
         m.addAction("回到密语", self.win.restore_from_desktop)
@@ -271,20 +277,262 @@ class DesktopPet(QWidget):
         m.exec(e.globalPos())
 
 
+_SLOT_GLYPH = {
+    "head": ("👑", "#748FFC"), "ear": ("🎀", "#FF8FAB"), "face": ("🕶", "#4DABF7"),
+    "neck": ("🧣", "#FF922B"), "body": ("🧥", "#9775FA"), "top": ("✨", "#FFD43B"),
+    "hand": ("🧋", "#20C997"), "fx": ("🌟", "#F783AC"),
+}
+
+
+class _ShowcaseStage(QFrame):
+    """3.7 潮玩展柜聚光舞台:顶光渐变展台 + 换装闪光粒子特效。"""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._sparks: list[list[float]] = []       # [x, y, vx, vy, r, life, max_life, hue]
+        self._timer = QTimer(self)
+        self._timer.setInterval(24)
+        self._timer.timeout.connect(self._step)
+
+    def burst(self) -> None:
+        cx, cy = self.width() / 2.0, self.height() * 0.56
+        for i in range(14):
+            a = i / 14 * math.tau + random.uniform(-0.2, 0.2)
+            sp = random.uniform(35, 95)
+            self._sparks.append([cx, cy, math.cos(a) * sp, math.sin(a) * sp - 20, random.uniform(2.5, 4.6),
+                                 0.55, 0.55, random.choice((45.0, 270.0, 340.0, 195.0))])
+        if not self._timer.isActive():
+            self._timer.start()
+
+    def _step(self) -> None:
+        dt = 0.024
+        nxt = []
+        for s in self._sparks:
+            s[5] -= dt
+            if s[5] <= 0:
+                continue
+            s[0] += s[2] * dt
+            s[1] += s[3] * dt
+            s[3] += 110.0 * dt
+            nxt.append(s)
+        self._sparks = nxt
+        if not nxt:
+            self._timer.stop()
+        self.update()
+
+    def paintEvent(self, _e) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = float(self.width()), float(self.height())
+        r = QRectF(1.0, 1.0, w - 2.0, h - 2.0)
+        dark = is_dark()
+        bg = QLinearGradient(0, 0, 0, h)
+        if dark:
+            bg.setColorAt(0.0, QColor(42, 46, 68, 200))
+            bg.setColorAt(1.0, QColor(24, 27, 42, 215))
+        else:
+            bg.setColorAt(0.0, QColor(255, 252, 248, 225))
+            bg.setColorAt(1.0, QColor(238, 242, 255, 220))
+        p.setPen(QPen(QColor(255, 255, 255, 65 if dark else 190), 1.2))
+        p.setBrush(QBrush(bg))
+        p.drawRoundedRect(r, 16, 16)
+        # 柔和顶光聚光灯圆晕
+        spot = QRadialGradient(QPointF(w / 2.0, h * 0.22), w * 0.62)
+        spot.setColorAt(0.0, QColor(255, 245, 210, 58 if dark else 115))
+        spot.setColorAt(0.6, QColor(150, 175, 255, 24 if dark else 38))
+        spot.setColorAt(1.0, QColor(0, 0, 0, 0))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(spot))
+        p.drawRoundedRect(r, 16, 16)
+        # 底部玻璃托盘光椭圆
+        p.setBrush(QColor(255, 255, 255, 24 if dark else 145))
+        p.drawEllipse(QPointF(w / 2.0, h - 18.0), w * 0.36, 9.0)
+        # 换装闪光粒子
+        for sx, sy, _vx, _vy, sr, life, ml, hue in self._sparks:
+            p.save()
+            p.setOpacity(max(0.0, min(1.0, life / ml)))
+            p.translate(sx, sy)
+            p.setBrush(QColor.fromHsvF(hue / 360.0, 0.55, 1.0))
+            p.drawPath(star_path(sr, 0.45))
+            p.restore()
+        p.end()
+
+
+class _AccCard(QPushButton):
+    """3.7 潮玩展柜装扮卡片:2.5D 迷你徽标 + 稀有度边框(普通/高阶/扭蛋金边) + 已穿戴发光角标 + 磨砂锁层。"""
+
+    def __init__(self, aid: str, name: str, lv: int, slot: str, parent=None) -> None:
+        super().__init__(parent)
+        self.aid, self.acc_name, self.lv, self.slot = aid, name, lv, slot
+        self._unlocked = True
+        self._worn = False
+        self.setCheckable(True)
+        self.setFixedHeight(54)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def set_state(self, unlocked: bool, worn: bool) -> None:
+        self._unlocked = unlocked
+        self._worn = worn
+        self.setEnabled(unlocked)
+        self.setChecked(worn)
+        self.update()
+
+    def _rarity_color(self) -> QColor:
+        if self.lv >= 999:
+            return QColor("#FF8FAB")      # 扭蛋限定:粉金边框
+        if self.lv >= 30:
+            return QColor("#F5B301")      # 传说高阶:鎏金边框
+        if self.lv >= 10:
+            return QColor("#9775FA")      # 进阶:星紫边框
+        return QColor("#4DABF7")          # 经典萌新:晴空蓝
+
+    def paintEvent(self, _e) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        w, h = float(self.width()), float(self.height())
+        r = QRectF(1.5, 1.5, w - 3.0, h - 3.0)
+        rc = self._rarity_color()
+        dark = is_dark()
+        hov = self.underMouse() and self._unlocked
+
+        # 卡片底板
+        if self._worn:
+            bg = QColor(rc.red(), rc.green(), rc.blue(), 46 if dark else 34)
+            border = QPen(rc, 2.0)
+        elif hov:
+            bg = QColor(255, 255, 255, 22 if dark else 190)
+            border = QPen(QColor(rc.red(), rc.green(), rc.blue(), 170), 1.4)
+        else:
+            bg = QColor(255, 255, 255, 12 if dark else 135)
+            border = QPen(QColor(rc.red(), rc.green(), rc.blue(), 85 if self._unlocked else 45), 1.1)
+        p.setPen(border)
+        p.setBrush(bg)
+        p.drawRoundedRect(r, 12, 12)
+
+        # 左侧 2.5D 迷你装扮徽标圆片
+        glyph, sc = _SLOT_GLYPH.get(self.slot, ("✨", "#748FFC"))
+        bx, by, br = 22.0, h / 2.0, 14.0
+        bc = QColor(rc if self.lv >= 30 else sc)
+        if not self._unlocked:
+            bc = QColor("#868E96")
+        bg_g = QRadialGradient(QPointF(bx - 4, by - 4), br * 1.4)
+        bg_g.setColorAt(0.0, bc.lighter(135))
+        bg_g.setColorAt(1.0, bc)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(bg_g))
+        p.drawEllipse(QPointF(bx, by), br, br)
+        ef = QFont()
+        ef.setFamilies(["Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji"])
+        ef.setPixelSize(14)
+        p.setFont(ef)
+        p.setPen(QColor("#FFFFFF"))
+        p.drawText(QRectF(bx - br, by - br, br * 2, br * 2), glyph, QTextOption(Qt.AlignmentFlag.AlignCenter))
+
+        # 右侧名称 + 稀有度/解锁标签
+        nf = QFont(self.font())
+        nf.setPixelSize(11)
+        nf.setWeight(QFont.Weight.DemiBold)
+        p.setFont(nf)
+        p.setPen(QColor(T["text"] if self._unlocked else T["faint"]))
+        txt = p.fontMetrics().elidedText(self.acc_name, Qt.TextElideMode.ElideRight, max(24, int(w - 50)))
+        p.drawText(QRectF(42, 8, w - 48, 19), txt, QTextOption(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft))
+
+        sf = QFont(self.font())
+        sf.setPixelSize(9)
+        p.setFont(sf)
+        sub = "扭蛋限定" if self.lv >= 999 else (f"Lv.{self.lv} 解锁" if not self._unlocked else ("已穿戴" if self._worn else f"Lv.{self.lv}"))
+        p.setPen(rc if (self._worn or self.lv >= 30) and self._unlocked else QColor(T["faint"]))
+        p.drawText(QRectF(42, 28, w - 48, 16), sub, QTextOption(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft))
+
+        # 右上角状态角标 (已穿戴 ✓ / 未解锁 🔒)
+        if self._worn:
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(rc)
+            p.drawEllipse(QPointF(w - 12, 12), 7.5, 7.5)
+            cf = QFont(self.font())
+            cf.setPixelSize(9)
+            cf.setWeight(QFont.Weight.Bold)
+            p.setFont(cf)
+            p.setPen(QColor("#FFFFFF"))
+            p.drawText(QRectF(w - 19.5, 4.5, 15, 15), "✓", QTextOption(Qt.AlignmentFlag.AlignCenter))
+        elif not self._unlocked:
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(0, 0, 0, 32 if dark else 18))
+            p.drawRoundedRect(r, 12, 12)
+            p.setFont(sf)
+            p.setPen(QColor(T["faint"]))
+            p.drawText(QRectF(w - 22, 4, 18, 16), "🔒", QTextOption(Qt.AlignmentFlag.AlignCenter))
+        p.end()
+
+
+class _DyeSwatchBtn(QPushButton):
+    """3.7 马卡龙圆球染色钮:立体光泽色球 + 选中外光环 + 底部色名。"""
+
+    def __init__(self, hex_c: str, cname: str, parent=None) -> None:
+        super().__init__(parent)
+        self.hex_c, self.cname = hex_c, cname
+        self.setCheckable(True)
+        self.setFixedSize(76, 54)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def paintEvent(self, _e) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        w, h = float(self.width()), float(self.height())
+        sel = self.isChecked()
+        hov = self.underMouse()
+        cx, cy = w / 2.0, 20.0
+        if sel or hov:
+            p.setPen(QPen(QColor(self.hex_c or T["accent"]), 1.6 if sel else 1.0))
+            p.setBrush(QColor(255, 255, 255, 28 if is_dark() else 160))
+            p.drawRoundedRect(QRectF(1.5, 1.5, w - 3, h - 3), 12, 12)
+        if self.hex_c:
+            col = QColor(self.hex_c)
+            if sel:
+                p.setPen(QPen(QColor("#FFFFFF"), 2.4))
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.drawEllipse(QPointF(cx, cy), 14.2, 14.2)
+            g = QRadialGradient(QPointF(cx - 4, cy - 4), 16)
+            g.setColorAt(0.0, col.lighter(135))
+            g.setColorAt(0.75, col)
+            g.setColorAt(1.0, col.darker(118))
+            p.setPen(QPen(QColor(0, 0, 0, 35), 0.9))
+            p.setBrush(QBrush(g))
+            p.drawEllipse(QPointF(cx, cy), 11.8, 11.8)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(255, 255, 255, 140))
+            p.drawEllipse(QPointF(cx - 3.8, cy - 4.2), 3.2, 2.0)
+        else:
+            p.setPen(QPen(QColor(T["sub"]), 1.4, Qt.PenStyle.DashLine))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawEllipse(QPointF(cx, cy), 11.5, 11.5)
+            p.setPen(QColor(T["text"]))
+            p.drawText(QRectF(cx - 12, cy - 12, 24, 24), "↩", QTextOption(Qt.AlignmentFlag.AlignCenter))
+        f = QFont(self.font())
+        f.setPixelSize(10)
+        f.setWeight(QFont.Weight.DemiBold if sel else QFont.Weight.Normal)
+        p.setFont(f)
+        p.setPen(QColor(T["text"] if sel else T["sub"]))
+        p.drawText(QRectF(2, 34, w - 4, 18), self.cname, QTextOption(Qt.AlignmentFlag.AlignCenter))
+        p.end()
+
+
 class WardrobeDialog(Dialog):
-    """衣橱和形态:上面是宠物预览和状态,下面按部位分页换装扮、换表情,最后一页看形态。"""
+    """衣橱和形态(3.7 潮玩展柜版):聚光展示台 + 装扮卡片 + 马卡龙染色球 + 6套一键穿搭方案。"""
 
     def __init__(self, win) -> None:
         super().__init__(win, "衣橱和形态")
         self.win = win
         g = self.g = win.pet_growth
         g.care()
-        self.setFixedWidth(760)
+        self.setFixedWidth(790)
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(24, 20, 24, 18)
+        lay.setContentsMargins(24, 18, 24, 16)
         lay.setSpacing(10)
         head_row = QHBoxLayout()
-        head_row.addWidget(label(f"{g.name} 的 2.5D 潮玩衣橱", "dialogTitle"))
+        head_row.addWidget(label(f"{g.name} 的 2.5D 潮玩展柜衣橱", "dialogTitle"))
         head_row.addStretch(1)
         self.sp_btns: dict[str, QPushButton] = {}
         for skey, sspec in SPECIES.items():
@@ -299,9 +547,8 @@ class WardrobeDialog(Dialog):
         lay.addLayout(head_row)
 
         top = QHBoxLayout()
-        stage = QFrame()
-        stage.setObjectName("plainCard")
-        stage.setFixedSize(TypingPet.W + 12, TypingPet.H + 22)
+        stage = self.stage_frame = _ShowcaseStage(self)
+        stage.setFixedSize(TypingPet.W + 18, TypingPet.H + 26)
         self.preview = TypingPet(stage)
         self.preview.bare = True
         self.preview.centered = True
@@ -309,10 +556,15 @@ class WardrobeDialog(Dialog):
         self.preview.show_room = True
         self.preview.growth = g
         self.preview.set_species(win.pet.species)
-        self.preview.move(6, 8)
-        self.preview_hit = PetHit(stage, self.preview.pat, tip="轻点摸摸 · 按住拖拽可 Q 弹捏脸!",
-                                  pet_getter=lambda: self.preview)
-        self.preview_hit.setGeometry(6, 8, TypingPet.W, TypingPet.H)
+        self.preview.move(9, 14)
+        self.preview_hit = PetHit(
+            stage,
+            lambda: (self.preview.pat(), g.cheer(4), self.mood.setText(f"现在:{g.mood_word()}")),
+            tip="轻点摸摸 · 按住拖拽可 Q 弹捏脸!",
+            pet_getter=lambda: self.preview,
+        )
+        self.preview_hit.setGeometry(stage.rect())
+        self.preview_hit.raise_()
         top.addWidget(stage)
         col = QVBoxLayout()
         col.setSpacing(4)
@@ -341,17 +593,18 @@ class WardrobeDialog(Dialog):
         tabs.setSpacing(2)
         self.stack = QStackedWidget()
         self.tab_btns: list[QPushButton] = []
-        self.item_btns: dict[str, QPushButton] = {}
+        self.item_btns: dict[str, _AccCard] = {}
         self.expr_btns: dict[str, QPushButton] = {}
         self.coat_btns: dict[str, QPushButton] = {}
         self.eye_btns: dict[str, QPushButton] = {}
         self.room_btns: dict[str, QPushButton] = {}
         self.outfit_rows: dict[str, tuple] = {}
+        self.preset_rows: dict[str, tuple] = {}
         self.trick_btns: dict[str, QPushButton] = {}
         pages = [(name, self._acc_page(slot)) for slot, name in SLOTS]
-        pages += [("套装", self._outfit_page()), ("染色", self._dye_page()), ("毛色", self._coat_page()),
-                  ("瞳色", self._eye_page()), ("小窝", self._room_page()), ("动作", self._trick_page()),
-                  ("表情", self._expr_page()), ("形态", self._form_page())]
+        pages += [("方案", self._preset_page()), ("套装", self._outfit_page()), ("染色", self._dye_page()),
+                  ("毛色", self._coat_page()), ("瞳色", self._eye_page()), ("小窝", self._room_page()),
+                  ("动作", self._trick_page()), ("表情", self._expr_page()), ("形态", self._form_page())]
         tabs2 = QHBoxLayout()
         tabs2.setSpacing(2)
         for i, (name, page) in enumerate(pages):
@@ -367,16 +620,17 @@ class WardrobeDialog(Dialog):
         tabs2.addStretch(1)
         lay.addLayout(tabs)
         lay.addLayout(tabs2)
-        self.stack.setFixedHeight(214)
+        self.stack.setFixedHeight(236)
         lay.addWidget(self.stack)
         self.tip = label("", "faint", wrap=True)
         lay.addWidget(self.tip)
         self._only_unlocked = False
         row = QHBoxLayout()
-        row.addWidget(button("🎁 每日签到 / 通行证", "", self.win.show_pet_pass, 146))
-        row.addWidget(button("🎮 接零食", "", self.win.show_snack_game, 92))
-        row.addWidget(button("☁️ 云端跳跳乐", "", self.win.show_cloud_game, 114))
-        row.addWidget(button("🎲 随机穿搭", "", self.random_outfit, 102))
+        row.setSpacing(6)
+        row.addWidget(button("🎁 签到/通行证", "", self.win.show_pet_pass, 114))
+        row.addWidget(button("🍉 合成大萌宠", "", self.win.show_merge_game, 108))
+        row.addWidget(button("📸 合拍大头贴", "", self.win.show_photobooth, 108))
+        row.addWidget(button("🎲 随机穿搭", "", self.random_outfit, 96))
         self.filter_btn = QPushButton("仅看已解锁")
         self.filter_btn.setObjectName("tab")
         self.filter_btn.setCheckable(True)
@@ -384,7 +638,7 @@ class WardrobeDialog(Dialog):
         self.filter_btn.clicked.connect(self._toggle_filter)
         row.addWidget(self.filter_btn)
         row.addStretch(1)
-        row.addWidget(button("完成", "primary", self.accept, 84))
+        row.addWidget(button("完成", "primary", self.accept, 80))
         lay.addLayout(row)
         self.show_tab(0)
         self.refresh()
@@ -401,6 +655,7 @@ class WardrobeDialog(Dialog):
             if pool and random.random() < 0.72:
                 self.g.toggle(random.choice(pool))
         self.preview.celebrate()
+        self.stage_frame.burst()
         self.tip.setText("🎲 已为你随机混搭了一套新造型!")
         self.refresh(keep_tip=True)
 
@@ -422,16 +677,85 @@ class WardrobeDialog(Dialog):
         page, grid = self._grid_page()
         items = [a for a in ACCESSORIES if a[3] == slot]
         for i, (aid, name, lv, _slot) in enumerate(items):
-            b = QPushButton(name)
-            b.setObjectName("choice")
-            b.setCheckable(True)
-            b.setMinimumHeight(40)
-            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b = _AccCard(aid, name, lv, slot, page)
             b.clicked.connect(lambda _=False, a=aid: self.toggle(a))
             grid.addWidget(b, i // 4, i % 4)
             self.item_btns[aid] = b
         grid.setRowStretch(len(items) // 4 + 1, 1)
         return self._wrap_scroll(page)
+
+    def _preset_page(self) -> QWidget:
+        """3.7 穿搭方案页:6 个独立槽位,一键保存/切换完整穿搭(含装扮+染色+毛色+瞳色+小窝+种类)。"""
+        page = QWidget()
+        grid = QGridLayout(page)
+        grid.setContentsMargins(0, 4, 0, 0)
+        grid.setSpacing(8)
+        for i in range(6):
+            sk = str(i + 1)
+            box = QFrame()
+            box.setObjectName("plainCard")
+            bl = QVBoxLayout(box)
+            bl.setContentsMargins(10, 8, 10, 8)
+            bl.setSpacing(4)
+            trow = QHBoxLayout()
+            title_lab = label(f"方案 {sk}", "cardTitle")
+            trow.addWidget(title_lab, 1)
+            ren_btn = button("改名", "link", lambda _=False, s=sk: self._rename_preset(s), 40)
+            clr_btn = button("清空", "link", lambda _=False, s=sk: self._clear_preset(s), 40)
+            trow.addWidget(ren_btn)
+            trow.addWidget(clr_btn)
+            bl.addLayout(trow)
+            sub_lab = label("空槽位 — 点击下方「保存当前」记录整套搭配", "fileSub", wrap=True)
+            bl.addWidget(sub_lab)
+            brow = QHBoxLayout()
+            brow.setSpacing(6)
+            save_btn = button("保存当前", "", lambda _=False, s=sk: self._save_preset(s), 86)
+            save_btn.setMinimumHeight(28)
+            apply_btn = button("一键换上", "primary", lambda _=False, s=sk: self._apply_preset(s), 86)
+            apply_btn.setMinimumHeight(28)
+            brow.addWidget(save_btn)
+            brow.addWidget(apply_btn)
+            brow.addStretch(1)
+            bl.addLayout(brow)
+            grid.addWidget(box, i // 2, i % 2)
+            self.preset_rows[sk] = (title_lab, sub_lab, apply_btn, ren_btn, clr_btn)
+        return self._wrap_scroll(page)
+
+    def _save_preset(self, slot: str) -> None:
+        cur = self.g.presets.get(slot, {})
+        name = cur.get("name") or f"方案 {slot}"
+        self.g.save_preset(slot, name, self.preview.species)
+        self.stage_frame.burst()
+        self.tip.setText(f"💾 已保存当前整套穿搭到「{name}」（含装扮、染色、毛色、瞳色与小窝）!")
+        self.refresh(keep_tip=True)
+
+    def _apply_preset(self, slot: str) -> None:
+        if slot not in self.g.presets:
+            return
+        sp = self.g.apply_preset(slot)
+        if sp and sp in SPECIES:
+            self.win.set_fun("pet", sp)
+            self.preview.set_species(sp)
+            for k, b in self.sp_btns.items():
+                b.setChecked(k == sp)
+        self.preview.celebrate()
+        self.stage_frame.burst()
+        self.tip.setText(f"✨ 已一键换上「{self.g.presets[slot].get('name', '方案')}」!")
+        self.refresh(keep_tip=True)
+
+    def _rename_preset(self, slot: str) -> None:
+        if slot not in self.g.presets:
+            return
+        cur = self.g.presets[slot].get("name", f"方案 {slot}")
+        nv = prompt(self, "给穿搭方案起个名字", "最多 12 个字，例如：赛博酷猫 / 温泉浴鸭", cur, max_len=12, ok="保存")
+        if nv is not None and nv.strip():
+            self.g.presets[slot]["name"] = nv.strip()[:12]
+            self.refresh(keep_tip=True)
+
+    def _clear_preset(self, slot: str) -> None:
+        if self.g.delete_preset(slot):
+            self.tip.setText(f"已清空方案 {slot}。")
+            self.refresh(keep_tip=True)
 
     def _outfit_page(self) -> QWidget:
         """套装:一键穿上;集齐全部部件身后会有一圈套装颜色的光。"""
@@ -476,16 +800,16 @@ class WardrobeDialog(Dialog):
         return page
 
     def _dye_page(self) -> QWidget:
-        """3.1 装扮自由染色:选择部位 + 12 色预设调色盘。"""
+        """3.7 马卡龙圆球调色盘:支持全部 8 个部位 + 自动高亮已穿戴部位 + 实时目标提示。"""
         page = QWidget()
         lay = QVBoxLayout(page)
         lay.setContentsMargins(0, 4, 0, 0)
-        lay.setSpacing(8)
-        self._dye_slot = "body"
+        lay.setSpacing(6)
+        self._dye_slot = "head"
         slot_row = QHBoxLayout()
-        slot_row.setSpacing(4)
+        slot_row.setSpacing(3)
         self.dye_slot_btns: dict[str, QPushButton] = {}
-        for sk, sname in (("head", "头饰"), ("ear", "耳边"), ("face", "脸上"), ("neck", "脖子"), ("body", "衣服"), ("hand", "手持")):
+        for sk, sname in SLOTS:
             sb = QPushButton(sname)
             sb.setObjectName("tab")
             sb.setCheckable(True)
@@ -497,23 +821,23 @@ class WardrobeDialog(Dialog):
         slot_row.addStretch(1)
         lay.addLayout(slot_row)
 
+        self.dye_target_lab = label("", "hint")
+        lay.addWidget(self.dye_target_lab)
+
         grid = QGridLayout()
         grid.setSpacing(6)
-        self.dye_color_btns: dict[str, QPushButton] = {}
+        self.dye_color_btns: dict[str, _DyeSwatchBtn] = {}
         for i, (hex_c, cname) in enumerate(DYE_PRESETS):
-            b = QPushButton(f"● {cname}" if hex_c else f"↩ {cname}")
-            b.setObjectName("choice")
-            b.setCheckable(True)
-            b.setMinimumHeight(38)
-            b.setCursor(Qt.CursorShape.PointingHandCursor)
-            if hex_c:
-                b.setStyleSheet(f"QPushButton {{ color: {hex_c}; font-weight: 600; }}")
+            b = _DyeSwatchBtn(hex_c, cname, page)
             b.clicked.connect(lambda _=False, c=hex_c: self.set_dye(c))
-            grid.addWidget(b, i // 4, i % 4)
+            grid.addWidget(b, i // 6, i % 6, Qt.AlignmentFlag.AlignCenter)
             self.dye_color_btns[hex_c] = b
         lay.addLayout(grid)
         lay.addStretch(1)
         return page
+
+    def _worn_in_slot(self, slot: str) -> str | None:
+        return next((w for w in self.g.wear if ACC_BY_ID.get(w, ("", "", 0, ""))[3] == slot), None)
 
     def _pick_dye_slot(self, slot: str) -> None:
         self._dye_slot = slot
@@ -523,10 +847,12 @@ class WardrobeDialog(Dialog):
 
     def set_dye(self, color: str) -> None:
         self.g.set_dye(self._dye_slot, color)
+        self.stage_frame.burst()
         self.refresh(keep_tip=True)
 
     def wear_outfit(self, oid: str) -> None:
         missing = self.g.wear_outfit(oid)
+        self.stage_frame.burst()
         self.tip.setText(("还差没解锁的:" + "、".join(missing) + "(升级或抽卡获得)") if missing else "整套穿上了!身后有一圈套装光效。")
         self.refresh(keep_tip=True)
 
@@ -602,8 +928,9 @@ class WardrobeDialog(Dialog):
         col.addStretch(1)
         return page
 
-    TIPS = {"套装": "一键穿上套装里已经解锁的部件;集齐整套,身后会有一圈套装颜色的光。",
-            "染色": "自由给帽子、衣服、丝带、掌机、吉他等装扮染色,打造独一无二的配色!",
+    TIPS = {"方案": "最多保存 6 套专属穿搭方案(含全部装扮、染色、毛色、瞳色、小窝与宠物种类),一键切换!",
+            "套装": "一键穿上套装里已经解锁的部件;集齐整套,身后会有一圈套装颜色的光。",
+            "染色": "支持全部 8 个部位、128 件装扮自由染色!带 ✓ 的部位表示已穿戴,点击马卡龙色球立即变色。",
             "毛色": "基因花色:暹罗挖煤脸、三花斑点、黑白奶牛、樱花奶霜等,串门和拍合照时朋友也能看到。",
             "瞳色": "更换 3D 虹膜颜色,Lv.12 解锁超人气的蓝金「鸳鸯异瞳」。",
             "小窝": "微缩 2.5D 景深小窝底座,在衣橱和「桌面陪伴」里生效(阳光软垫的窗外会随日夜变化)。",
@@ -625,10 +952,17 @@ class WardrobeDialog(Dialog):
         for j, b in enumerate(self.tab_btns):
             b.setChecked(i == j)
         name = self.tab_btns[i].text()
+        if name == "染色" and self._worn_in_slot(getattr(self, "_dye_slot", "head")) is None:
+            for sk, _sn in SLOTS:
+                if self._worn_in_slot(sk) is not None:
+                    self._dye_slot = sk
+                    break
+            self.refresh(keep_tip=True)
         self.tip.setText(self.TIPS.get(name, "装扮随等级解锁,也能抽卡提前拿到。同一个部位一次戴一件,再点一下摘下。"))
 
     def toggle(self, aid: str) -> None:
         self.g.toggle(aid)
+        self.stage_frame.burst()
         self.refresh()
 
     def set_expr(self, eid: str) -> None:
@@ -653,14 +987,26 @@ class WardrobeDialog(Dialog):
             a = ACC_BY_ID[aid]
             ok = g.is_unlocked(aid)
             b.setVisible(ok or not getattr(self, "_only_unlocked", False))
-            b.setEnabled(ok)
-            b.setChecked(aid in g.wear)
-            lock_tag = "扭蛋" if a[2] >= 999 else f"Lv.{a[2]}"
-            b.setText(a[1] if ok else f"🔒 {a[1]}  {lock_tag}")
+            b.set_state(ok, aid in g.wear)
             sets = [o[1] for o in OUTFITS if aid in o[2]]
             tip_lock = "扭蛋限定(每日免费券/十连扭即可抽到)" if a[2] >= 999 else f"Lv.{a[2]} 解锁(也能抽卡提前抽到)"
             b.setToolTip((tip_lock if not ok else "点一下戴上 / 摘下")
                          + (f"\n属于套装:{'、'.join(sets)}" if sets else ""))
+        for sk, (tlab, slab, abtn, rbtn, cbtn) in getattr(self, "preset_rows", {}).items():
+            pr = g.presets.get(sk)
+            if pr:
+                sp_name = SPECIES.get(pr.get("species", ""), {}).get("label", "当前形态")
+                tlab.setText(f"✨ {pr.get('name') or f'方案 {sk}'}")
+                slab.setText(f"{sp_name} · {len(pr.get('wear') or [])} 件装扮 · {len(pr.get('dye') or {})} 处染色")
+                abtn.setEnabled(True)
+                rbtn.setVisible(True)
+                cbtn.setVisible(True)
+            else:
+                tlab.setText(f"方案 {sk}")
+                slab.setText("空槽位 — 点击「保存当前」记录当前整套搭配")
+                abtn.setEnabled(False)
+                rbtn.setVisible(False)
+                cbtn.setVisible(False)
         full = g.full_outfit()
         for oid, (btn, parts_lab, box) in self.outfit_rows.items():
             o = next(x for x in OUTFITS if x[0] == oid)
@@ -685,7 +1031,21 @@ class WardrobeDialog(Dialog):
                 ok = g.has_trick(tid)
                 b.setEnabled(ok)
                 b.setText(f"✨ {name}" if ok else f"🔒 {name}(通行证)")
-        cur_dye = g.dye.get(getattr(self, "_dye_slot", "body"), "")
+        cur_slot = getattr(self, "_dye_slot", "head")
+        cur_dye = g.dye.get(cur_slot, "")
+        for sk, sname in SLOTS:
+            sb = getattr(self, "dye_slot_btns", {}).get(sk)
+            if sb is not None:
+                worn = self._worn_in_slot(sk) is not None
+                sb.setText(f"{sname}✓" if worn else sname)
+                sb.setChecked(sk == cur_slot)
+        if getattr(self, "dye_target_lab", None) is not None:
+            sn = dict(SLOTS).get(cur_slot, cur_slot)
+            wid = self._worn_in_slot(cur_slot)
+            if wid is not None:
+                self.dye_target_lab.setText(f"🎨 正在染色：【{sn}】{ACC_BY_ID[wid][1]}（点击下方色块即时变色）")
+            else:
+                self.dye_target_lab.setText(f"⚠️ 当前【{sn}】未穿戴装扮，请切到上方带 ✓ 的部位或先穿一件「{sn}」")
         for hex_c, b in getattr(self, "dye_color_btns", {}).items():
             b.setChecked(hex_c == cur_dye)
         for eid, b in self.expr_btns.items():
@@ -716,6 +1076,103 @@ class WardrobeDialog(Dialog):
         self.win.pet.update()
         if self.win.desktop_win is not None:
             self.win.desktop_win.update()
+
+
+class FocusPomodoroDialog(Dialog):
+    """3.7 专注番茄钟与喝水/久坐提醒窗口(联动萌宠眼镜与灵动岛实时倒计时)。"""
+
+    def __init__(self, win) -> None:
+        super().__init__(win, "专注番茄钟与喝水提醒")
+        self.win = win
+        self.setFixedWidth(430)
+        self.focus_mins = 25
+        self.water_mins = 45
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(24, 20, 24, 18)
+        lay.setSpacing(10)
+        lay.addWidget(label("🍅 专注番茄钟 & 喝水久坐提醒", "dialogTitle"))
+        lay.addWidget(label("专注时萌宠会自动戴上圆框学习镜安静陪伴，顶栏灵动岛同步跳动倒计时；完成可获 +40 宠物经验与 +18 心情！",
+                            "hint", wrap=True))
+
+        active = getattr(win, "_focus_end", 0.0) > time.monotonic()
+        if active:
+            left = max(0, int(win._focus_end - time.monotonic()))
+            mm, ss = divmod(left, 60)
+            st_card = QFrame(self)
+            st_card.setObjectName("plainCard")
+            sl = QHBoxLayout(st_card)
+            sl.setContentsMargins(12, 8, 12, 8)
+            sl.addWidget(label(f"🔥 正在专注「{getattr(win, '_focus_label', '专注')}」· 剩余 {mm:02d}:{ss:02d}", "cardTitle"), 1)
+            sl.addWidget(button("提前结束", "destructive", self._stop_now, 88))
+            lay.addWidget(st_card)
+
+        lay.addWidget(label("专注时长：", "section"))
+        frow = QHBoxLayout()
+        frow.setSpacing(6)
+        self._fbtns: list[tuple[int, QPushButton]] = []
+        for m, txt in ((15, "15 分钟轻专注"), (25, "25 分钟番茄"), (45, "45 分钟深度")):
+            b = QPushButton(txt, self)
+            b.setObjectName("tab")
+            b.setCheckable(True)
+            b.setChecked(m == 25)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.clicked.connect(lambda _=False, v=m: self._pick_f(v))
+            frow.addWidget(b)
+            self._fbtns.append((m, b))
+        lay.addLayout(frow)
+
+        self.goal_edit = QLineEdit(self)
+        self.goal_edit.setPlaceholderText("专注目标，例如：写周报 / 写代码 / 看书")
+        self.goal_edit.setText(getattr(win, "_focus_label", "") or "番茄专注")
+        self.goal_edit.setMaxLength(16)
+        lay.addWidget(self.goal_edit)
+
+        lay.addWidget(label("循环喝水 / 久坐起身提醒：", "section"))
+        wrow = QHBoxLayout()
+        wrow.setSpacing(6)
+        self._wbtns: list[tuple[int, QPushButton]] = []
+        cur_w = getattr(win, "_water_mins", 0)
+        self.water_mins = cur_w
+        for m, txt in ((0, "关闭"), (30, "每 30 分钟"), (45, "每 45 分钟"), (60, "每 60 分钟")):
+            b = QPushButton(txt, self)
+            b.setObjectName("tab")
+            b.setCheckable(True)
+            b.setChecked(m == cur_w)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.clicked.connect(lambda _=False, v=m: self._pick_w(v))
+            wrow.addWidget(b)
+            self._wbtns.append((m, b))
+        lay.addLayout(wrow)
+
+        row = QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(button("取消", "", self.reject, 76))
+        row.addWidget(button("仅保存喝水提醒", "", self._save_water_only, 128))
+        row.addWidget(button("🍅 开始专注", "primary", self._start_now, 108))
+        lay.addLayout(row)
+
+    def _pick_f(self, m: int) -> None:
+        self.focus_mins = m
+        for v, b in self._fbtns:
+            b.setChecked(v == m)
+
+    def _pick_w(self, m: int) -> None:
+        self.water_mins = m
+        for v, b in self._wbtns:
+            b.setChecked(v == m)
+
+    def _stop_now(self) -> None:
+        self.win.stop_focus(completed=False)
+        self.accept()
+
+    def _save_water_only(self) -> None:
+        self.win.set_water_reminder(self.water_mins)
+        self.accept()
+
+    def _start_now(self) -> None:
+        self.win.set_water_reminder(self.water_mins)
+        self.win.start_focus(self.focus_mins, self.goal_edit.text().strip() or "番茄专注")
+        self.accept()
 
 
 class PetCustomDialog(Dialog):
@@ -990,9 +1447,12 @@ class PetLifeMixin:
         m.addSeparator()
         ci_tag = "  🔴 可签到" if can_checkin(g) else ""
         m.addAction(f"🎁  每日签到与萌宠通行证…{ci_tag}", self.show_pet_pass)
+        m.addAction("🍉  合成大萌宠…", self.show_merge_game)
         m.addAction("🎮  接零食大作战…", self.show_snack_game)
         m.addAction("☁️  云端跳跳乐…", self.show_cloud_game)
-        m.addAction("👗  衣橱、染色与形态…", self.show_wardrobe)
+        m.addAction("🍅  专注番茄钟与喝水提醒…", self.show_focus_dialog)
+        m.addAction("📸  萌宠双人合拍大头贴…", self.show_photobooth)
+        m.addAction("👗  2.5D 潮玩展柜衣橱与穿搭方案…", self.show_wardrobe)
         from ..fun import BUBBLE_AURAS
         am = make_menu(m)
         am.setTitle("✨  气泡边缘特效(12 款)")
@@ -1227,6 +1687,91 @@ class PetLifeMixin:
         self.pet.update()
         if self.desktop_win is not None:
             self.desktop_win.update()
+
+    def show_merge_game(self) -> None:
+        MergePetDialog(self).exec()
+        self.pet.update()
+        if self.desktop_win is not None:
+            self.desktop_win.update()
+
+    def show_photobooth(self, peer_id: str | None = None) -> None:
+        PhotoBoothDialog(self, initial_peer_id=peer_id).exec()
+
+    def show_focus_dialog(self) -> None:
+        FocusPomodoroDialog(self).exec()
+
+    def start_focus(self, minutes: int = 25, goal: str = "番茄专注") -> None:
+        minutes = max(1, min(120, int(minutes)))
+        self._focus_label = (goal or "番茄专注")[:16]
+        self._focus_end = time.monotonic() + minutes * 60
+        self.pet._focus_mode = True
+        self.pet.say(f"🍅 进入 {minutes} 分钟专注，我戴上眼镜陪你~", 3.2)
+        self.pet.update()
+        if self.desktop_win is not None:
+            self.desktop_win.pet._focus_mode = True
+            self.desktop_win.pet.update()
+        if getattr(self, "island", None) is not None:
+            self.island.set_focus(self._focus_label, self._focus_end)
+        old = getattr(self, "_focus_timer", None)
+        if old is not None:
+            old.stop()
+            old.deleteLater()
+        t = QTimer(self)
+        t.setSingleShot(True)
+        t.timeout.connect(lambda: self.stop_focus(completed=True))
+        t.start(minutes * 60 * 1000)
+        self._focus_timer = t
+
+    def stop_focus(self, completed: bool = False) -> None:
+        old = getattr(self, "_focus_timer", None)
+        if old is not None:
+            old.stop()
+            old.deleteLater()
+            self._focus_timer = None
+        self._focus_end = 0.0
+        self.pet._focus_mode = False
+        self.pet.update()
+        if self.desktop_win is not None:
+            self.desktop_win.pet._focus_mode = False
+            self.desktop_win.pet.update()
+        if getattr(self, "island", None) is not None:
+            self.island.clear_focus()
+        if completed:
+            g = self.pet_growth
+            before = g.level
+            g.xp += 40
+            g.cheer(18)
+            self.pet.celebrate()
+            self.pet.say("🔔 专注完成! +40 经验，起来喝口水活动一下吧 💧", 5.0)
+            if g.level > before and hasattr(self, "_pet_level_up"):
+                self._pet_level_up()
+            if getattr(self, "notifier", None) is not None:
+                self.notifier.play(force=True)
+            if self.isVisible() and not self.isMinimized():
+                info(self, "🍅 专注完成！", f"太棒啦！完成了「{getattr(self, '_focus_label', '番茄专注')}」\n已奖励宠物 +40 经验、+18 心情，快起身喝口水休息 5 分钟吧 💧")
+        else:
+            self.pet.say("番茄钟已暂停，休息一下吧~", 2.2)
+
+    def set_water_reminder(self, minutes: int) -> None:
+        self._water_mins = max(0, int(minutes))
+        old = getattr(self, "_water_timer", None)
+        if old is not None:
+            old.stop()
+            old.deleteLater()
+            self._water_timer = None
+        if self._water_mins <= 0:
+            return
+        t = QTimer(self)
+        t.setInterval(self._water_mins * 60 * 1000)
+        def _ping() -> None:
+            if not self.isVisible() or self.isMinimized():
+                return
+            self.pet.alert()
+            self.pet.say("💧 喝口水、伸个懒腰活动一下肩颈吧~", 5.5)
+        t.timeout.connect(_ping)
+        t.start()
+        self._water_timer = t
+        self.pet.say(f"💧 记好啦！每 {self._water_mins} 分钟提醒你喝水伸懒腰~", 2.6)
 
     def set_desktop_locked(self, on: bool) -> None:
         self.desktop_locked = bool(on)

@@ -12,7 +12,7 @@ from PySide6.QtWidgets import QApplication, QToolTip
 from .. import imaging
 from ..dialogs import ask, info
 from ..ui import HEADER_H, VIDEO_EXTS, drop_paths, file_ext, images_from_mime
-from ..widgets import GIF_LABELS, Conv, DropOverlay, HoverBar, Msg
+from ..widgets import AURA_BUBBLES, GIF_LABELS, Conv, DropOverlay, HoverBar, Msg
 
 MAX_DROP = 30                     # 一次最多拖多少个(图片 + 文件 + 文件夹)
 
@@ -92,10 +92,13 @@ class UxMixin:
             self._gif_timer.start()
 
     def sync_gifs(self) -> None:
-        """聊天区里的动图:在视野里的播放,看不见的暂停;窗口最小化 / 藏起来时全部暂停。"""
+        """聊天区里的动图与气泡边缘特效:在视野里的播放,看不见的暂停;窗口最小化 / 藏起来时全部暂停。"""
         vp = self.msg_area.viewport()
         shown = self.window_visible() and not self.isMinimized()
         view = vp.rect()
+        isl = getattr(self, "island", None)
+        if isl is not None:
+            isl.set_active(shown)
         for lab in list(GIF_LABELS):
             try:
                 if not vp.isAncestorOf(lab):                # 大图窗口、匿名纸条预览里的:它们自己管
@@ -104,6 +107,14 @@ class UxMixin:
                 lab.set_active(on)
             except RuntimeError:                            # 气泡已经删掉了
                 GIF_LABELS.discard(lab)
+        for bub in list(AURA_BUBBLES):
+            try:
+                if not vp.isAncestorOf(bub):
+                    continue
+                on = shown and bub.isVisible() and QRect(bub.mapTo(vp, QPoint(0, 0)), bub.size()).intersects(view)
+                bub.set_aura_active(on)
+            except RuntimeError:
+                AURA_BUBBLES.discard(bub)
 
     def _place_ux(self) -> None:
         if self.drop_overlay.isVisible():
@@ -111,6 +122,12 @@ class UxMixin:
             self.drop_overlay.raise_()
         if self.hover_bar.isVisible():
             self.hover_bar.raise_()
+        if getattr(self, "jump_btn", None) is not None and self.jump_btn.isVisible():
+            self._sync_jump_btn()
+        isl = getattr(self, "island", None)
+        if isl is not None:
+            isl._retarget()
+            isl.place()
 
     # ---------------------------------------------------------------- 快捷操作条
     def hover_actions(self, m: Msg) -> list[str]:

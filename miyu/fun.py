@@ -168,6 +168,25 @@ ACCESSORIES = [
     ("bear_hood", "毛绒熊耳帽", 999, "head"),
     ("plaid_scarf", "格子围巾", 999, "neck"),
     ("honey_jar", "蜂蜜罐", 999, "hand"),
+    # 3.6 真 3D 盲盒潮玩新装扮(含 Lv.1/2/4/8 立刻可穿套装 + 扭蛋限定梦幻套装)
+    ("bunny_hood", "软萌兔耳帽", 1, "head"),
+    ("duck_float", "小鸭泳圈", 1, "body"),
+    ("plush_duck", "小黄鸭玩偶", 1, "hand"),
+    ("cloud_beret", "星云贝雷帽", 2, "head"),
+    ("mini_planet", "土星小行星", 2, "top"),
+    ("star_glasses", "星芒护目镜", 2, "face"),
+    ("crystal_tiara", "水晶皇冠", 4, "head"),
+    ("crystal_wings", "琉璃水晶翼", 4, "body"),
+    ("magic_orb", "悬浮水晶球", 4, "hand"),
+    ("kitty_mask", "机甲猫面罩", 8, "face"),
+    ("cyber_wings", "霓虹光翼", 8, "body"),
+    ("prism_rings", "全息浮环", 8, "fx"),
+    ("sakura_halo", "落樱光环", 999, "top"),
+    ("sakura_lantern", "发光纸灯笼", 999, "hand"),
+    ("choker_star", "星铃颈环", 999, "neck"),
+    ("angel_cloak", "星辰斗篷", 999, "body"),
+    ("star_wand", "星月法杖", 999, "hand"),
+    ("meteor_fx", "流星环绕", 999, "fx"),
 ]
 # 套装:(id, 名字, 部件, 集齐后的光效颜色)。一键穿上,集齐有一圈套装光效
 OUTFITS = [
@@ -196,6 +215,13 @@ OUTFITS = [
     ("koi", "招财锦鲤(扭蛋)", ("koi_clip", "lucky_cloak", "coin_halo"), "#FA5252"),
     ("retro", "复古像素(扭蛋)", ("retro_visor", "pixel_cape", "pixel_stars"), "#845EF7"),
     ("teddy", "软萌小熊(扭蛋)", ("bear_hood", "plaid_scarf", "honey_jar"), "#D4A373"),
+    # 3.6 真 3D 盲盒潮玩新套装
+    ("spa_duck", "治愈浴场鸭鸭", ("bunny_hood", "duck_float", "plush_duck"), "#FFD43B"),
+    ("star_voyager", "星环探索者", ("cloud_beret", "mini_planet", "star_glasses"), "#748FFC"),
+    ("crystal_angel", "水晶幻翼天使", ("crystal_tiara", "crystal_wings", "magic_orb"), "#B197FC"),
+    ("cyber_pilot", "赛博霓虹机师", ("kitty_mask", "cyber_wings", "prism_rings"), "#20C997"),
+    ("sakura_night", "和风赏樱灯笼(扭蛋)", ("sakura_halo", "sakura_lantern", "choker_star"), "#FF8FAB"),
+    ("moon_mage", "星月魔导士(扭蛋)", ("angel_cloak", "star_wand", "meteor_fx"), "#9775FA"),
 ]
 OUTFIT_BY_ID = {o[0]: o for o in OUTFITS}
 SLOTS = [("head", "头饰"), ("ear", "耳边"), ("face", "脸上"), ("neck", "脖子"), ("body", "衣服"), ("top", "头顶"),
@@ -315,6 +341,13 @@ GACHA_POOL = [
     ("SSR", "acc", "pixel_stars", "像素星光(扭蛋限定)"),
     ("R", "acc", "bear_hood", "毛绒熊耳帽(扭蛋限定)"), ("R", "acc", "plaid_scarf", "格子围巾(扭蛋限定)"),
     ("SR", "acc", "honey_jar", "蜂蜜罐(扭蛋限定)"),
+    # 3.6 真 3D 盲盒潮玩扭蛋新装扮
+    ("R", "acc", "choker_star", "星铃颈环(扭蛋限定)"), ("SR", "acc", "sakura_lantern", "发光纸灯笼(扭蛋限定)"),
+    ("SSR", "acc", "sakura_halo", "落樱光环(扭蛋限定)"),
+    ("SR", "acc", "angel_cloak", "星辰斗篷(扭蛋限定)"), ("SR", "acc", "star_wand", "星月法杖(扭蛋限定)"),
+    ("SSR", "acc", "meteor_fx", "流星环绕(扭蛋限定)"),
+    ("R", "acc", "cloud_beret", "星云贝雷帽"), ("SR", "acc", "crystal_wings", "琉璃水晶翼"),
+    ("SR", "acc", "cyber_wings", "霓虹光翼"), ("SSR", "acc", "prism_rings", "全息浮环"),
     # 3.2 动态边缘气泡特效(抽卡即可提前或限定解锁)
     ("R", "aura", "bubble", "气泡特效·梦幻泡泡"), ("R", "aura", "sakura", "气泡特效·樱粉流瓣"),
     ("R", "aura", "frost", "气泡特效·霜雪晶芒"), ("R", "aura", "heart", "气泡特效·心动粉波"),
@@ -477,8 +510,33 @@ class PetGrowth:
         self.pass_claimed: set[int] = {x for x in (d.get("pass_claimed") or []) if type(x) is int and 1 <= x <= 30}
         self.snack_best = _int("snack_best")
         self.cloud_best = _int("cloud_best")
+        self.merge_best = _int("merge_best")
+        # 3.7 穿搭预设方案(最多 6 套:槽位 "1"~"6")
+        self.presets: dict[str, dict] = {}
+        raw_p = d.get("presets")
+        if isinstance(raw_p, dict):
+            for k, v in list(raw_p.items())[:6]:
+                sk = str(k)
+                if sk in ("1", "2", "3", "4", "5", "6") and isinstance(v, dict):
+                    pw = [w for w in (v.get("wear") or []) if isinstance(w, str) and w in ACC_BY_ID][:8]
+                    pd = {
+                        dk: dv.upper() for dk, dv in (v.get("dye") or {}).items()
+                        if dk in slot_ids and isinstance(dv, str) and re.fullmatch(r"#[0-9A-Fa-f]{6}", dv)
+                    }
+                    self.presets[sk] = {
+                        "name": str(v.get("name") or f"方案 {sk}")[:12],
+                        "species": v.get("species") if v.get("species") in SPECIES else "",
+                        "wear": pw, "dye": pd,
+                        "coat": str(v.get("coat") or "classic"),
+                        "eyes": str(v.get("eyes") or "obsidian"),
+                        "room": str(v.get("room") or "none"),
+                        "expr": str(v.get("expr") or "normal"),
+                    }
         aura_raw = d.get("aura")
         self.aura = aura_raw if isinstance(aura_raw, str) and aura_raw in AURA_BY_ID else ""
+        mat_raw = d.get("material")
+        self.material = mat_raw if mat_raw in ("clay", "porcelain", "jelly", "metal") else "clay"
+        self.render3d = bool(d.get("render3d", True))
         self.custom_lines: list[str] = [
             str(x).strip()[:40] for x in (d.get("custom_lines") or []) if isinstance(x, str) and x.strip()
         ][:10]
@@ -486,6 +544,7 @@ class PetGrowth:
         self.off_work = ow if isinstance(ow, str) and re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", ow) else ""
         self.daily.setdefault("snack_xp", _int("snack_xp", daily))
         self.daily.setdefault("cloud_xp", _int("cloud_xp", daily))
+        self.daily.setdefault("merge_xp", _int("merge_xp", daily))
         self.badges = {k: str(v) for k, v in (d.get("badges") or {}).items() if k in BADGE_BY_ID} \
             if isinstance(d.get("badges"), dict) else {}
         self.title = d.get("title") if d.get("title") in self.badges else ""
@@ -809,6 +868,15 @@ class PetGrowth:
         self.aura = aid
         return True
 
+    def set_material(self, mid: str) -> bool:
+        if mid in ("clay", "porcelain", "jelly", "metal"):
+            self.material = mid
+            return True
+        return False
+
+    def set_render3d(self, on: bool) -> None:
+        self.render3d = bool(on)
+
     def set_dye(self, slot: str, color: str) -> bool:
         if slot not in {s[0] for s in SLOTS}:
             return False
@@ -864,6 +932,59 @@ class PetGrowth:
         self.xp += gain
         self._check(today)
         return gain, self.level - before
+
+    def record_merge_score(self, score: int, today: str | None = None) -> tuple[int, int]:
+        """记录「合成大萌宠」分数,返回 (获得经验, 升了几级)。每天最多从该游戏获得 260 经验。"""
+        self._roll_day(today)
+        score = max(0, int(score))
+        if score > self.merge_best:
+            self.merge_best = score
+        used = int(self.daily.get("merge_xp", 0))
+        gain = min(max(0, 260 - used), max(20, score // 3)) if score > 0 else 0
+        self.daily["merge_xp"] = used + gain
+        self.pass_pts += min(32, max(6, score // 10))
+        self.joy = clamp(self.joy + 16)
+        before = self.level
+        self.xp += gain
+        self._check(today)
+        return gain, self.level - before
+
+    def save_preset(self, slot: str, name: str = "", species: str = "") -> bool:
+        """保存当前装扮、染色、毛色、瞳色、小窝、表情到指定穿搭方案槽位("1"~"6")。"""
+        sk = str(slot)
+        if sk not in ("1", "2", "3", "4", "5", "6"):
+            return False
+        self.presets[sk] = {
+            "name": (name or "").strip()[:12] or f"方案 {sk}",
+            "species": species if species in SPECIES else "",
+            "wear": list(self.wear),
+            "dye": dict(self.dye),
+            "coat": self.coat,
+            "eyes": self.eyes,
+            "room": self.room,
+            "expr": self.expr,
+        }
+        return True
+
+    def apply_preset(self, slot: str) -> str:
+        """一键套用穿搭方案(自动校验解锁状态)。返回该方案保存的 species(若有)。"""
+        p = self.presets.get(str(slot))
+        if not isinstance(p, dict):
+            return ""
+        self.wear = [w for w in (p.get("wear") or []) if self.is_unlocked(w)]
+        self.dye = dict(p.get("dye") or {})
+        if p.get("coat"):
+            self.set_coat(p["coat"])
+        if p.get("eyes"):
+            self.set_eyes(p["eyes"])
+        if p.get("room"):
+            self.set_room(p["room"])
+        if p.get("expr"):
+            self.set_expr(p["expr"])
+        return str(p.get("species") or "")
+
+    def delete_preset(self, slot: str) -> bool:
+        return self.presets.pop(str(slot), None) is not None
 
     @property
     def form(self) -> tuple[int, str, str]:
@@ -941,8 +1062,10 @@ class PetGrowth:
                 "coat": self.coat, "eyes": self.eyes, "room": self.room, "dye": dict(self.dye),
                 "checkin_days": self.checkin_days, "checkin_last": self.checkin_last,
                 "pass_pts": self.pass_pts, "pass_claimed": sorted(self.pass_claimed),
-                "snack_best": self.snack_best, "cloud_best": self.cloud_best,
-                "aura": self.aura, "custom_lines": list(self.custom_lines), "off_work": self.off_work}
+                "snack_best": self.snack_best, "cloud_best": self.cloud_best, "merge_best": self.merge_best,
+                "presets": {k: dict(v) for k, v in self.presets.items()},
+                "aura": self.aura, "material": self.material, "render3d": self.render3d,
+                "custom_lines": list(self.custom_lines), "off_work": self.off_work}
 
 
 SPARK_COLORS = {
@@ -1617,21 +1740,17 @@ class TypingPet(QWidget):
         if outfit is not None:                          # 集齐套装:身后一圈套装颜色的光
             self._paint_outfit_glow(p, now, cx, cy, outfit[3])
 
-        # 背部与耳朵 + 3D 粘土头部:只画输入框边缘以上的部分
+        # 背部与耳朵 + 2.5D 粘土头部:只画输入框边缘以上的部分
         p.save()
         p.setClipRect(QRectF(0, 0, self.W, self.EDGE + 0.5))
         back_cx = cx - yaw * 6.5
-        if "cape" in wear:                               # 披风 / 翅膀 / 喷气背包带背部负视差
-            self._acc_cape(p, back_cx, cy, out)
-        if "fairy" in wear:
-            self._acc_fairy(p, now, back_cx, cy)
-        if "jetpack" in wear:
-            self._acc_jetpack(p, now, back_cx, cy)
+        self._paint_back_wear(p, now, back_cx, cy, wear, out)
         paint_3d_tail(p, self.species, body, inner, now, cx, cy, yaw)
         paint_3d_ears(p, self.species, coat, body, inner, cx + stx * 0.35, cy + sty * 0.25, yaw, pitch, wiggle)
-        if self.growth.mythic:                          # 神话期:一对会发光的大羽翼
+        has_custom_wings = bool(wear & {"fairy", "mech_wings", "flame_wings", "seraph_wings", "crystal_wings", "cyber_wings"})
+        if self.growth.mythic and not has_custom_wings: # 神话期:一对会发光的大羽翼(穿戴专属翅膀时优先展示所穿翅膀)
             self._paint_mythic_wings(p, now, back_cx, cy, tk)
-        elif self.growth.evolved:                       # 进化:背后一对向上扬起的小翅膀
+        elif self.growth.evolved and not has_custom_wings: # 进化:背后一对向上扬起的小翅膀
             flap = math.sin((now - self._t0) * 3.0) * 2.0
             p.setPen(QPen(QColor("#8FA4E0"), 1.4))
             for sgn in (-1, 1):
@@ -1645,37 +1764,18 @@ class TypingPet(QWidget):
                 p.drawLine(QPointF(back_cx + sgn * 30, cy - 4), QPointF(back_cx + sgn * 41, cy - 20 - flap * 0.6))
                 p.drawLine(QPointF(back_cx + sgn * 32, cy + 1), QPointF(back_cx + sgn * 42, cy - 10 - flap * 0.3))
             p.setPen(out)
-        if "hoodie" in wear:                             # 卫衣的帽子:脸周围一圈立体棉帽
-            p.setPen(contour_pen(QColor("#9AA8F0"), 1.3))
-            p.setBrush(clay_brush(cx + yaw * 2.5, cy + 5, 35, 32, QColor("#9AA8F0"), yaw, pitch))
+        if "hoodie" in wear:                             # 卫衣的帽子:脸周围一圈立体棉帽(支持染色)
+            hcol = self._dye("body", "#9AA8F0")
+            p.setPen(contour_pen(hcol, 1.3))
+            p.setBrush(clay_brush(cx + yaw * 2.5, cy + 5, 35, 32, hcol, yaw, pitch))
             p.drawEllipse(QPointF(cx + yaw * 2.5, cy + 5), 35.5, 32)
         paint_3d_head_coat(p, self.species, coat, body, inner, cx, cy, yaw, pitch, stx, sty)
         body_cx = cx + yaw * 4.5 + stx * 0.35
-        if "hoodie" in wear:
-            self._acc_hoodie(p, body_cx, out)
-        if "sailor" in wear:
-            self._acc_sailor(p, body_cx, out)
-        if "raincoat" in wear:
-            self._acc_raincoat(p, body_cx, out)
-        if "overalls" in wear:
-            self._acc_overalls(p, body_cx, out)
-        if "apron" in wear:
-            self._acc_apron(p, body_cx, out)
-        if "kimono" in wear:
-            self._acc_kimono(p, body_cx, out)
+        self._paint_body_wear(p, body_cx, wear, out)
         p.restore()
 
         neck_cx = cx + yaw * 5.2 + stx * 0.4
-        if "scarf" in wear:
-            self._acc_scarf(p, neck_cx, out)
-        if "bell" in wear:
-            self._acc_bell(p, neck_cx, out)
-        if "bowtie" in wear:
-            self._acc_bowtie(p, neck_cx, out)
-        if "tie" in wear:
-            self._acc_tie(p, neck_cx, out)
-        if "pearl" in wear:
-            self._acc_pearl(p, neck_cx)
+        self._paint_neck_wear(p, neck_cx, wear, out)
 
         # 卡皮巴拉没戴帽子和头顶饰品时,默认稳稳顶着一颗小蜜橘
         has_head_or_top = any(ACC_BY_ID.get(w, ("", "", 0, ""))[3] in ("head", "top") for w in wear)
@@ -1786,6 +1886,21 @@ class TypingPet(QWidget):
         self._paint_wear(p, now, wcx, wcy, ey, wear, out)
         self._paint_wear2(p, now, wcx, wcy, ey, wear, out)
         self._paint_wear3(p, now, wcx, wcy, ey, wear, out)
+        if getattr(self, "_focus_mode", False):
+            # 番茄专注中:若未戴眼镜则自动戴上圆框学习金丝镜 + 右上角浮一颗小番茄徽章
+            if not (wear & {"glasses", "nerd", "monocle", "vr", "round_shades", "pixel_shades", "mech_visor", "retro_visor", "star_glasses", "kitty_mask"}):
+                p.setPen(QPen(QColor("#D98200"), 1.5))
+                p.setBrush(QColor(255, 255, 255, 70))
+                for s_f in (-1, 1):
+                    p.drawEllipse(QPointF(wcx + s_f * 10, ey), 6.2, 6.2)
+                p.drawLine(QPointF(wcx - 3.8, ey - 0.5), QPointF(wcx + 3.8, ey - 0.5))
+            bob = math.sin((now - self._t0) * 2.4) * 1.8
+            p.setPen(QPen(QColor("#C92A2A"), 1.0))
+            p.setBrush(QColor("#FF6B6B"))
+            p.drawEllipse(QPointF(wcx + 26, wcy - 28 + bob), 5.2, 4.6)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor("#51CF66"))
+            p.drawEllipse(QPointF(wcx + 26, wcy - 33 + bob), 3.0, 1.5)
 
         # 3D 粘土小爪子(带粉色小肉垫感)
         pressed = self._paw if now - self._press_t < 0.14 else -1
@@ -1872,8 +1987,9 @@ class TypingPet(QWidget):
             p.setBrush(c)
             p.drawEllipse(QPointF(cx - 0.9, gy - 1.2), 1.0, 1.0)
         if "glasses" in wear:
+            col = self._dye("face", "#282430")
             p.setPen(thin)
-            p.setBrush(QColor(40, 36, 48, 235))
+            p.setBrush(QColor(col.red(), col.green(), col.blue(), 230))
             for s in (-1, 1):
                 p.drawRoundedRect(QRectF(cx + s * 10 - 6.2, ey - 4.2, 12.4, 8.6), 3.4, 3.4)
             p.drawLine(QPointF(cx - 3.8, ey - 1.6), QPointF(cx + 3.8, ey - 1.6))
@@ -1883,13 +1999,14 @@ class TypingPet(QWidget):
             for s in (-1, 1):
                 p.drawLine(QPointF(cx + s * 10 - 3.4, ey - 1.8), QPointF(cx + s * 10 - 1.4, ey - 3.2))
         if "beanie" in wear:
+            col = self._dye("head", "#7FA7E8")
             cap = QPainterPath(QPointF(cx - 26, top + 11))
             cap.cubicTo(cx - 25, top - 13, cx + 25, top - 13, cx + 26, top + 11)
             cap.closeSubpath()
             p.setPen(out)
-            p.setBrush(QColor("#7FA7E8"))
+            p.setBrush(clay_brush(cx, top, 26, 14, col, self.pose3d.yaw))
             p.drawPath(cap)
-            p.setBrush(QColor("#5C86D1"))
+            p.setBrush(col.darker(120))
             p.drawRoundedRect(QRectF(cx - 27.5, top + 6.5, 55, 8), 4, 4)
             p.setPen(QPen(QColor(255, 255, 255, 110), 1.1))
             for k in range(-4, 5):
@@ -1898,37 +2015,40 @@ class TypingPet(QWidget):
             p.setBrush(QColor("#FFFFFF"))
             p.drawEllipse(QPointF(cx, top - 6.5), 5.2, 5.2)
         if "crown" in wear:
+            col = self._dye("head", "#FFD43B")
             y0 = top + 1.5
             path = QPainterPath(QPointF(cx - 11, y0))
             for x, y in ((-12.5, y0 - 11), (-6, y0 - 5), (0, y0 - 14), (6, y0 - 5), (12.5, y0 - 11), (11, y0)):
                 path.lineTo(cx + x, y)
             path.closeSubpath()
-            p.setPen(QPen(QColor("#B8860B"), 1.3))
-            p.setBrush(QColor("#FFD43B"))
+            p.setPen(QPen(col.darker(145), 1.3))
+            p.setBrush(col)
             p.drawPath(path)
             p.setPen(Qt.PenStyle.NoPen)
-            for x, col in ((-6.5, "#FF6B6B"), (0, "#4DABF7"), (6.5, "#63E6BE")):
-                p.setBrush(QColor(col))
+            for x, gcol in ((-6.5, "#FF6B6B"), (0, "#4DABF7"), (6.5, "#63E6BE")):
+                p.setBrush(QColor(gcol))
                 p.drawEllipse(QPointF(cx + x, y0 - 3), 1.6, 1.6)
             p.setBrush(QColor("#FFF3BF"))
             p.drawEllipse(QPointF(cx, y0 - 14), 1.7, 1.7)
         if "party" in wear:
+            col = self._dye("head", "#7C5CFF")
             hat = QPainterPath(QPointF(cx - 12, top + 3))
             hat.lineTo(cx + 4, top - 22)
             hat.lineTo(cx + 13, top + 3)
             hat.closeSubpath()
             p.setPen(thin)
-            p.setBrush(QColor("#7C5CFF"))
+            p.setBrush(col)
             p.drawPath(hat)
             p.setPen(Qt.PenStyle.NoPen)
-            for k, col in ((0.3, "#FFD43B"), (0.6, "#63E6BE")):            # 斜条纹
-                p.setBrush(QColor(col))
+            for k, dcol in ((0.3, "#FFD43B"), (0.6, "#63E6BE")):            # 斜条纹
+                p.setBrush(QColor(dcol))
                 p.drawEllipse(QPointF(cx - 12 + 16 * k + 9 * k, top + 3 - 25 * k), 2.0, 2.0)
             p.setBrush(QColor("#FF8FAB"))
             p.drawEllipse(QPointF(cx + 4, top - 23), 3.0, 3.0)
         if "strawhat" in wear:
-            p.setPen(QPen(QColor("#B08A3E"), 1.2))
-            p.setBrush(QColor("#F2D58A"))
+            col = self._dye("head", "#F2D58A")
+            p.setPen(QPen(col.darker(135), 1.2))
+            p.setBrush(col)
             p.drawEllipse(QPointF(cx, top + 5), 34, 6.5)                   # 帽檐
             crown = QPainterPath(QPointF(cx - 16, top + 5))
             crown.cubicTo(cx - 16, top - 12, cx + 16, top - 12, cx + 16, top + 5)
@@ -1938,6 +2058,7 @@ class TypingPet(QWidget):
             p.setBrush(QColor("#E5383B"))
             p.drawRect(QRectF(cx - 16, top - 0.5, 32, 4))
         if "headphones" in wear:
+            col = self._dye("head", "#FF8FAB")
             band = QPainterPath(QPointF(cx - 28, cy - 4))
             band.cubicTo(cx - 29, top - 16, cx + 29, top - 16, cx + 28, cy - 4)
             pen = QPen(QColor("#495057"), 3.4)
@@ -1947,28 +2068,30 @@ class TypingPet(QWidget):
             p.drawPath(band)
             p.setPen(out)
             for s in (-1, 1):
-                p.setBrush(QColor("#FF8FAB"))
+                p.setBrush(col)
                 p.drawRoundedRect(QRectF(cx + s * 29 - 5, cy - 11, 10, 15), 4.5, 4.5)
                 p.setPen(Qt.PenStyle.NoPen)
                 p.setBrush(QColor(255, 255, 255, 120))
                 p.drawEllipse(QPointF(cx + s * 29 - 1.2, cy - 6.5), 1.5, 2.6)
                 p.setPen(out)
         if "bow" in wear:
+            col = self._dye("ear", "#FF6B8A")
             bx, by = cx + 19, top + 5
             p.setPen(thin)
-            p.setBrush(QColor("#FF6B8A"))
+            p.setBrush(col)
             for s in (-1, 1):
                 wing = QPainterPath(QPointF(bx, by))
                 wing.lineTo(bx + s * 8.5, by - 5.5)
                 wing.quadTo(bx + s * 10.5, by, bx + s * 8.5, by + 5.5)
                 wing.closeSubpath()
                 p.drawPath(wing)
-            p.setBrush(QColor("#E64980"))
+            p.setBrush(col.darker(118))
             p.drawEllipse(QPointF(bx, by), 2.6, 2.6)
         if "flower" in wear:
+            col = self._dye("ear", "#FFF0F6")
             fx, fy = cx - 19, top + 6
-            p.setPen(QPen(QColor("#E8A0B4"), 0.9))
-            p.setBrush(QColor("#FFF0F6"))
+            p.setPen(QPen(col.darker(122), 0.9))
+            p.setBrush(col)
             for k in range(5):
                 a = k / 5 * math.tau - math.pi / 2
                 p.drawEllipse(QPointF(fx + math.cos(a) * 4, fy + math.sin(a) * 4), 3.2, 3.2)
@@ -1976,14 +2099,15 @@ class TypingPet(QWidget):
             p.setBrush(QColor("#FFC94D"))
             p.drawEllipse(QPointF(fx, fy), 2.4, 2.4)
         if "halo" in wear:
+            col = self._dye("top", "#FFC107")
             bob = math.sin((now - self._t0) * 2.4) * 1.6
             hy = top - 13 + bob
-            glow = QColor("#FFE066")
+            glow = QColor(col.lighter(125))
             glow.setAlphaF(0.35)
             p.setPen(QPen(glow, 5))
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawEllipse(QPointF(cx, hy), 13, 3.6)
-            p.setPen(QPen(QColor("#FFC107"), 2.2))
+            p.setPen(QPen(col, 2.2))
             p.drawEllipse(QPointF(cx, hy), 13, 3.6)
 
     def _paint_expr_eye(self, p: QPainter, x: float, ey: float, s: int, out: QPen) -> None:
@@ -2107,11 +2231,12 @@ class TypingPet(QWidget):
         p.restore()
 
     def _acc_jetpack(self, p: QPainter, now: float, cx: float, cy: float) -> None:
+        col = self._dye("body", "#CED4DA")
         out = QPen(QColor(OUTLINE), 1.3)
         for s_ in (-1, 1):
             r = QRectF(cx + s_ * 30 - 7, cy - 12, 14, 26)
             p.setPen(out)
-            p.setBrush(QColor("#CED4DA"))
+            p.setBrush(clay_brush(r.center().x(), r.center().y(), 8, 14, col))
             p.drawRoundedRect(r, 6, 6)
             p.setBrush(QColor("#FA5252"))
             p.drawRoundedRect(QRectF(r.x() + 2, r.y() + 3, 10, 5), 2, 2)
@@ -2125,12 +2250,13 @@ class TypingPet(QWidget):
             p.drawPath(flame)
 
     def _acc_apron(self, p: QPainter, cx: float, out: QPen) -> None:
+        col = self._dye("body", "#FFFFFF")
         y = self.EDGE - 8                                   # 只露出输入框上面一点点(上面是脸)
         p.setPen(QPen(QColor("#FFA94D"), 1.4))
         p.drawLine(QPointF(cx - 11, y + 1), QPointF(cx - 21, y - 3))
         p.drawLine(QPointF(cx + 11, y + 1), QPointF(cx + 21, y - 3))
         p.setPen(out)
-        p.setBrush(QColor("#FFFFFF"))
+        p.setBrush(col)
         ap = QPainterPath(QPointF(cx - 11, y))
         ap.lineTo(cx + 11, y)
         ap.quadTo(cx + 15, y + 5, cx + 16, self.EDGE + 2)
@@ -2138,13 +2264,14 @@ class TypingPet(QWidget):
         ap.quadTo(cx - 15, y + 5, cx - 11, y)
         p.drawPath(ap)
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor("#FFD8A8"))
+        p.setBrush(col.darker(115) if self._has_dye("body") else QColor("#FFD8A8"))
         p.drawRoundedRect(QRectF(cx - 6, y + 3, 12, 5), 2, 2)
 
     def _acc_kimono(self, p: QPainter, cx: float, out: QPen) -> None:
+        col = self._dye("body", "#F783AC")
         y = self.EDGE - 12
         p.setPen(out)
-        p.setBrush(QColor("#F783AC"))
+        p.setBrush(col)
         k = QPainterPath(QPointF(cx - 30, y + 4))
         k.quadTo(cx, y - 2, cx + 30, y + 4)
         k.lineTo(cx + 33, self.EDGE + 2)
@@ -2155,7 +2282,7 @@ class TypingPet(QWidget):
         p.drawLine(QPointF(cx - 9, y), QPointF(cx + 4, self.EDGE + 1))
         p.drawLine(QPointF(cx + 9, y), QPointF(cx - 2, self.EDGE - 4))
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor("#7048E8"))                          # 腰带
+        p.setBrush(col.darker(140) if self._has_dye("body") else QColor("#7048E8"))   # 腰带
         p.drawRect(QRectF(cx - 31, self.EDGE - 4, 62, 5))
         p.setBrush(QColor(255, 255, 255, 200))                  # 小樱花纹
         for dx in (-20, 18):
@@ -2163,10 +2290,231 @@ class TypingPet(QWidget):
                 a = i / 5 * math.tau
                 p.drawEllipse(QPointF(cx + dx + math.cos(a) * 2.4, y + 6 + math.sin(a) * 2.4), 1.5, 1.5)
 
+    def _has_dye(self, slot: str) -> bool:
+        return bool(getattr(self.growth, "dye", {}).get(slot, ""))
+
     def _dye(self, slot: str, default: str) -> QColor:
         """如果用户给该部位自定义染色了就用染色,否则用默认颜色。"""
         c = getattr(self.growth, "dye", {}).get(slot, "")
         return QColor(c) if c else QColor(default)
+
+    def _paint_back_wear(self, p: QPainter, now: float, cx: float, cy: float, wear: set, out: QPen) -> None:
+        """背部图层(画在耳朵与头部后面,并自动做桌边裁切):披风 / 翅膀 / 喷气背包。"""
+        t = now - self._t0
+        if "cape" in wear:
+            self._acc_cape(p, cx, cy, out)
+        if "fairy" in wear:
+            self._acc_fairy(p, now, cx, cy)
+        if "jetpack" in wear:
+            self._acc_jetpack(p, now, cx, cy)
+        for wid, wcol, wglow in (("mech_wings", "#22B8CF", "#99E9F2"), ("flame_wings", "#FF6B6B", "#FFD43B"),
+                                 ("seraph_wings", "#FFF9DB", "#FFD43B")):
+            if wid in wear:
+                col = self._dye("body", wcol)
+                flap = math.sin(t * 4.2) * 3.5
+                p.setPen(QPen(col.lighter(135) if self._has_dye("body") else QColor(wglow), 1.5))
+                p.setBrush(clay_brush(cx, cy, 42, 22, col))
+                for s in (-1, 1):
+                    wp = QPainterPath(QPointF(cx + s * 18, cy + 4))
+                    wp.cubicTo(cx + s * 45, cy - 20 + flap, cx + s * 54, cy + 4 + flap, cx + s * 28, cy + 16)
+                    wp.closeSubpath()
+                    p.drawPath(wp)
+        if "crystal_wings" in wear:                             # 3.6 水晶幻翼(双层半透晶羽+微光)
+            col = self._dye("body", "#C5B4FF")
+            flap = math.sin(t * 3.2) * 3.0
+            for s in (-1, 1):
+                for layer, (sx, lift, alpha) in enumerate(((48, 28, 170), (38, 16, 215))):
+                    wp = QPainterPath(QPointF(cx + s * 16, cy + 2))
+                    wp.cubicTo(cx + s * (sx * 0.6), cy - lift - flap, cx + s * sx, cy - lift + 6 - flap,
+                               cx + s * (sx - 6), cy + 12)
+                    wp.quadTo(cx + s * 24, cy + 14, cx + s * 16, cy + 2)
+                    c = QColor(col.lighter(120 if layer else 100))
+                    c.setAlpha(alpha)
+                    p.setPen(QPen(QColor(255, 255, 255, 210), 1.2))
+                    p.setBrush(c)
+                    p.drawPath(wp)
+                p.setPen(QPen(QColor(255, 255, 255, 190), 1.0))
+                p.drawLine(QPointF(cx + s * 22, cy), QPointF(cx + s * 42, cy - 16 - flap * 0.6))
+        if "cyber_wings" in wear:                               # 3.6 赛博光翼(双刃霓虹光羽)
+            col = self._dye("body", "#20C997")
+            edge = col.lighter(145) if self._has_dye("body") else QColor("#9775FA")
+            pulse = math.sin(t * 5.0) * 2.5
+            for s in (-1, 1):
+                for dy, sx in ((-16, 48), (0, 42)):
+                    blade = QPainterPath(QPointF(cx + s * 18, cy + dy * 0.35 + 4))
+                    blade.lineTo(cx + s * sx, cy + dy - 8 + pulse)
+                    blade.lineTo(cx + s * (sx - 4), cy + dy + 5 + pulse)
+                    blade.lineTo(cx + s * 22, cy + dy * 0.35 + 11)
+                    blade.closeSubpath()
+                    p.setPen(QPen(edge, 1.5))
+                    p.setBrush(QColor(col.red(), col.green(), col.blue(), 175))
+                    p.drawPath(blade)
+        if "angel_cloak" in wear:                               # 3.6 星月魔导披风(宽摆金边+星纹)
+            col = self._dye("body", "#6741D9")
+            cloak = QPainterPath(QPointF(cx - 25, cy - 3))
+            cloak.cubicTo(cx - 40, cy + 6, cx - 44, cy + 18, cx - 46, self.EDGE + 2)
+            cloak.lineTo(cx + 46, self.EDGE + 2)
+            cloak.cubicTo(cx + 44, cy + 18, cx + 40, cy + 6, cx + 25, cy - 3)
+            cloak.closeSubpath()
+            p.setPen(QPen(QColor("#FFD43B"), 1.6))
+            p.setBrush(clay_brush(cx, cy + 6, 44, 24, col))
+            p.drawPath(cloak)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor("#FFF3BF"))
+            for sx, sy in ((-35, cy + 10), (35, cy + 10), (-39, cy + 18), (39, cy + 18)):
+                p.drawEllipse(QPointF(cx + sx, sy), 1.8, 1.8)
+
+    def _paint_body_wear(self, p: QPainter, cx: float, wear: set, out: QPen) -> None:
+        """身体衣服图层(画在头部下方、颈饰与爪子后面,并做桌边裁切)。"""
+        thin = QPen(QColor(OUTLINE), 1.3)
+        if "hoodie" in wear:
+            self._acc_hoodie(p, cx, out)
+        if "sailor" in wear:
+            self._acc_sailor(p, cx, out)
+        if "raincoat" in wear:
+            self._acc_raincoat(p, cx, out)
+        if "overalls" in wear:
+            self._acc_overalls(p, cx, out)
+        if "apron" in wear:
+            self._acc_apron(p, cx, out)
+        if "kimono" in wear:
+            self._acc_kimono(p, cx, out)
+        if "sweater" in wear:                                   # 条纹针织毛衣(支持染色)
+            col = self._dye("body", "#FF8787")
+            y = self.EDGE - 10
+            p.setPen(thin)
+            p.setBrush(clay_brush(cx, y + 6, 28, 10, col))
+            sw = QPainterPath(QPointF(cx - 26, y + 3))
+            sw.quadTo(cx, y - 2, cx + 26, y + 3)
+            sw.lineTo(cx + 29, self.EDGE + 2)
+            sw.lineTo(cx - 29, self.EDGE + 2)
+            sw.closeSubpath()
+            p.drawPath(sw)
+            p.setPen(QPen(QColor(255, 255, 255, 195), 2.0))
+            p.drawLine(QPointF(cx - 23, y + 6), QPointF(cx + 23, y + 6))
+        if "overcoat" in wear:                                  # 卡其/染色风衣
+            col = self._dye("body", "#D4A373")
+            y = self.EDGE - 11
+            p.setPen(thin)
+            p.setBrush(clay_brush(cx, y + 6, 30, 10, col))
+            oc = QPainterPath(QPointF(cx - 28, y + 4))
+            oc.quadTo(cx, y - 3, cx + 28, y + 4)
+            oc.lineTo(cx + 31, self.EDGE + 2)
+            oc.lineTo(cx - 31, self.EDGE + 2)
+            oc.closeSubpath()
+            p.drawPath(oc)
+            p.setPen(QPen(col.darker(135), 1.4))
+            p.drawLine(QPointF(cx - 8, y + 1), QPointF(cx - 3, self.EDGE + 1))
+            p.drawLine(QPointF(cx + 8, y + 1), QPointF(cx + 3, self.EDGE + 1))
+        if "king_robe" in wear:                                 # 星穹皇家披风(通行证限定,支持染色)
+            col = self._dye("body", "#5F3DC4")
+            y = self.EDGE - 12
+            p.setPen(QPen(QColor("#FFD43B"), 1.6))
+            p.setBrush(clay_brush(cx, y + 6, 34, 12, col))
+            kr = QPainterPath(QPointF(cx - 32, y + 3))
+            kr.quadTo(cx, y - 4, cx + 32, y + 3)
+            kr.lineTo(cx + 36, self.EDGE + 2)
+            kr.lineTo(cx - 36, self.EDGE + 2)
+            kr.closeSubpath()
+            p.drawPath(kr)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor("#FFF3BF"))
+            for sx in (-16, 0, 16):
+                p.drawEllipse(QPointF(cx + sx, y + 7), 1.7, 1.7)
+        for bid, defc, trim in (("galaxy_cloak", "#4C2A85", "#B197FC"), ("bat_cloak", "#2B1B2E", "#E03131"),
+                                ("crane_robe", "#E6FCF5", "#20C997"), ("mermaid_fin", "#339AF0", "#A5F3FC"),
+                                ("lucky_cloak", "#E03131", "#FFD43B"), ("pixel_cape", "#5F3DC4", "#63E6BE"),
+                                ("sweet_apron", "#A9E34B", "#FFF0F6")):
+            if bid in wear:
+                col = self._dye("body", defc)
+                y = self.EDGE - 12
+                p.setPen(QPen(QColor(trim), 1.6))
+                p.setBrush(clay_brush(cx, y + 6, 36, 14, col))
+                cp = QPainterPath(QPointF(cx - 31, y + 3))
+                cp.quadTo(cx, y - 4, cx + 31, y + 3)
+                cp.lineTo(cx + 35, self.EDGE + 2)
+                cp.lineTo(cx - 35, self.EDGE + 2)
+                cp.closeSubpath()
+                p.drawPath(cp)
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor(trim))
+                for sx in (-14, 0, 14):
+                    p.drawEllipse(QPointF(cx + sx, y + 7), 1.8, 1.8)
+        if "duck_float" in wear:                                # 3.6 小黄鸭泳圈(黏土质感+左侧小鸭头与橙嘴)
+            col = self._dye("body", "#FFD43B")
+            y = self.EDGE - 10
+            p.setPen(thin)
+            p.setBrush(clay_brush(cx, y + 5, 32, 8, col, self.pose3d.yaw))
+            p.drawRoundedRect(QRectF(cx - 31, y, 62, 11.5), 5.8, 5.8)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(255, 255, 255, 130))
+            p.drawRoundedRect(QRectF(cx - 18, y + 2, 24, 2.6), 1.3, 1.3)
+            # 左侧探出的小鸭脑袋
+            dx, dy = cx - 26, y - 3.5
+            p.setPen(thin)
+            p.setBrush(clay_brush(dx, dy, 7, 7, col))
+            p.drawEllipse(QPointF(dx, dy), 6.2, 5.8)
+            p.setBrush(QColor("#FF922B"))
+            p.drawEllipse(QPointF(dx - 6.0, dy + 0.8), 3.0, 1.8)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor("#1D1D1F"))
+            p.drawEllipse(QPointF(dx - 2.0, dy - 1.2), 1.2, 1.2)
+
+    def _paint_neck_wear(self, p: QPainter, cx: float, wear: set, out: QPen) -> None:
+        """颈饰图层(画在衣服上方、小爪子后面)。"""
+        thin = QPen(QColor(OUTLINE), 1.3)
+        if "scarf" in wear:
+            self._acc_scarf(p, cx, out)
+        if "bell" in wear:
+            self._acc_bell(p, cx, out)
+        if "bowtie" in wear:
+            self._acc_bowtie(p, cx, out)
+        if "tie" in wear:
+            self._acc_tie(p, cx, out)
+        if "pearl" in wear:
+            self._acc_pearl(p, cx)
+        if "ribbon_neck" in wear:                               # 学院领结丝带(支持染色)
+            col = self._dye("neck", "#FF6B6B")
+            ny = self.EDGE - 9
+            p.setPen(thin)
+            p.setBrush(col)
+            for s in (-1, 1):
+                tail = QPainterPath(QPointF(cx, ny))
+                tail.lineTo(cx + s * 8, ny + 8)
+                tail.lineTo(cx + s * 3, ny + 9)
+                tail.closeSubpath()
+                p.drawPath(tail)
+                wing = QPainterPath(QPointF(cx, ny))
+                wing.lineTo(cx + s * 9, ny - 4)
+                wing.lineTo(cx + s * 8, ny + 3)
+                wing.closeSubpath()
+                p.drawPath(wing)
+            p.drawEllipse(QPointF(cx, ny), 2.8, 2.6)
+        if "plaid_scarf" in wear:                               # 格子围巾
+            col = self._dye("neck", "#D9480F")
+            ny = self.EDGE - 11
+            p.setPen(thin)
+            p.setBrush(clay_brush(cx, ny, 24, 7, col))
+            p.drawRoundedRect(QRectF(cx - 22, ny - 3, 44, 7.5), 3.5, 3.5)
+            p.setPen(QPen(QColor("#FFF3BF"), 1.2))
+            for sx in (-12, 0, 12):
+                p.drawLine(QPointF(cx + sx, ny - 2.5), QPointF(cx + sx, ny + 4))
+        if "choker_star" in wear:                               # 3.6 星空颈链(丝绒颈带+金星吊坠)
+            col = self._dye("neck", "#7950F2")
+            ny = self.EDGE - 4.5
+            band = QPainterPath(QPointF(cx - 24, ny - 2))
+            band.quadTo(cx, ny + 3.2, cx + 24, ny - 2)
+            pen = QPen(col, 3.2)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            p.setPen(pen)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawPath(band)
+            p.save()
+            p.translate(cx, ny + 3.2)
+            p.setPen(QPen(QColor("#D98200"), 0.9))
+            p.setBrush(QColor("#FFD43B"))
+            p.drawPath(star_path(4.4, 0.46))
+            p.restore()
 
     def _paint_wear3(self, p: QPainter, now: float, cx: float, cy: float, ey: float, wear: set, out: QPen) -> None:
         t = now - self._t0
@@ -2201,110 +2549,11 @@ class TypingPet(QWidget):
             p.setBrush(col)
             p.drawPath(star_path(4.8, 0.45))
             p.restore()
-        if "ribbon_neck" in wear:                               # 学院领结丝带(支持染色)
-            col = self._dye("neck", "#FF6B6B")
-            ny = self.EDGE - 9
-            p.setPen(thin)
-            p.setBrush(col)
-            for s in (-1, 1):
-                tail = QPainterPath(QPointF(cx, ny))
-                tail.lineTo(cx + s * 8, ny + 8)
-                tail.lineTo(cx + s * 3, ny + 9)
-                tail.closeSubpath()
-                p.drawPath(tail)
-                wing = QPainterPath(QPointF(cx, ny))
-                wing.lineTo(cx + s * 9, ny - 4)
-                wing.lineTo(cx + s * 8, ny + 3)
-                wing.closeSubpath()
-                p.drawPath(wing)
-            p.drawEllipse(QPointF(cx, ny), 2.8, 2.6)
-        if "sweater" in wear:                                   # 条纹针织毛衣(支持染色)
-            col = self._dye("body", "#FF8787")
-            y = self.EDGE - 10
-            p.setPen(thin)
-            p.setBrush(col)
-            sw = QPainterPath(QPointF(cx - 26, y + 3))
-            sw.quadTo(cx, y - 2, cx + 26, y + 3)
-            sw.lineTo(cx + 29, self.EDGE + 2)
-            sw.lineTo(cx - 29, self.EDGE + 2)
-            sw.closeSubpath()
-            p.drawPath(sw)
-            p.setPen(QPen(QColor(255, 255, 255, 195), 2.0))
-            p.drawLine(QPointF(cx - 23, y + 6), QPointF(cx + 23, y + 6))
-        if "overcoat" in wear:                                  # 卡其/染色风衣
-            col = self._dye("body", "#D4A373")
-            y = self.EDGE - 11
-            p.setPen(thin)
-            p.setBrush(col)
-            oc = QPainterPath(QPointF(cx - 28, y + 4))
-            oc.quadTo(cx, y - 3, cx + 28, y + 4)
-            oc.lineTo(cx + 31, self.EDGE + 2)
-            oc.lineTo(cx - 31, self.EDGE + 2)
-            oc.closeSubpath()
-            p.drawPath(oc)
-            p.setPen(QPen(col.darker(135), 1.4))
-            p.drawLine(QPointF(cx - 8, y + 1), QPointF(cx - 3, self.EDGE + 1))
-            p.drawLine(QPointF(cx + 8, y + 1), QPointF(cx + 3, self.EDGE + 1))
-        if "king_robe" in wear:                                 # 星穹皇家披风(通行证限定,支持染色)
-            col = self._dye("body", "#5F3DC4")
-            y = self.EDGE - 12
-            p.setPen(QPen(QColor("#FFD43B"), 1.6))
-            p.setBrush(col)
-            kr = QPainterPath(QPointF(cx - 32, y + 3))
-            kr.quadTo(cx, y - 4, cx + 32, y + 3)
-            kr.lineTo(cx + 36, self.EDGE + 2)
-            kr.lineTo(cx - 36, self.EDGE + 2)
-            kr.closeSubpath()
-            p.drawPath(kr)
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor("#FFF3BF"))
-            for sx in (-16, 0, 16):
-                p.drawEllipse(QPointF(cx + sx, y + 7), 1.7, 1.7)
-        # ---- 3.2 高阶 & 扭蛋限定装扮 (2.5D 黏土质感 + 自由染色)
-        for bid, defc, trim in (("galaxy_cloak", "#4C2A85", "#B197FC"), ("bat_cloak", "#2B1B2E", "#E03131"),
-                                ("crane_robe", "#E6FCF5", "#20C997"), ("mermaid_fin", "#339AF0", "#A5F3FC"),
-                                ("lucky_cloak", "#E03131", "#FFD43B"), ("pixel_cape", "#5F3DC4", "#63E6BE"),
-                                ("sweet_apron", "#A9E34B", "#FFF0F6")):
-            if bid in wear:
-                col = self._dye("body", defc)
-                y = self.EDGE - 12
-                p.setPen(QPen(QColor(trim), 1.6))
-                p.setBrush(clay_brush(cx, y + 6, 36, 14, col))
-                cp = QPainterPath(QPointF(cx - 31, y + 3))
-                cp.quadTo(cx, y - 4, cx + 31, y + 3)
-                cp.lineTo(cx + 35, self.EDGE + 2)
-                cp.lineTo(cx - 35, self.EDGE + 2)
-                cp.closeSubpath()
-                p.drawPath(cp)
-                p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(QColor(trim))
-                for sx in (-14, 0, 14):
-                    p.drawEllipse(QPointF(cx + sx, y + 7), 1.8, 1.8)
-        for wid, wcol, wglow in (("mech_wings", "#22B8CF", "#99E9F2"), ("flame_wings", "#FF6B6B", "#FFD43B"),
-                                 ("seraph_wings", "#FFF9DB", "#FFD43B")):
-            if wid in wear:
-                col = self._dye("body", wcol)
-                flap = math.sin(t * 4.2) * 3.5
-                p.setPen(QPen(QColor(wglow), 1.5))
-                p.setBrush(clay_brush(cx, cy, 42, 22, col))
-                for s in (-1, 1):
-                    wp = QPainterPath(QPointF(cx + s * 20, cy + 4))
-                    wp.cubicTo(cx + s * 46, cy - 16 + flap, cx + s * 54, cy + 6 + flap, cx + s * 28, cy + 16)
-                    wp.closeSubpath()
-                    p.drawPath(wp)
-        if "plaid_scarf" in wear:                               # 格子围巾
-            col = self._dye("neck", "#D9480F")
-            ny = self.EDGE - 11
-            p.setPen(thin)
-            p.setBrush(clay_brush(cx, ny, 24, 7, col))
-            p.drawRoundedRect(QRectF(cx - 22, ny - 3, 44, 7.5), 3.5, 3.5)
-            p.setPen(QPen(QColor("#FFF3BF"), 1.2))
-            for sx in (-12, 0, 12):
-                p.drawLine(QPointF(cx + sx, ny - 2.5), QPointF(cx + sx, ny + 4))
+        # ---- 3.2 高阶 & 扭蛋限定头/脸/耳/头顶装扮 (2.5D 黏土质感 + 自由染色)
         for fid, fcol, fglow in (("mech_visor", "#15AABF", "#66D9E8"), ("retro_visor", "#7950F2", "#FFD43B")):
             if fid in wear:
                 col = self._dye("face", fcol)
-                p.setPen(QPen(QColor(fglow), 1.5))
+                p.setPen(QPen(col.lighter(135) if self._has_dye("face") else QColor(fglow), 1.5))
                 p.setBrush(QColor(col.red(), col.green(), col.blue(), 195))
                 p.drawRoundedRect(QRectF(cx - 21, ey - 5.5, 42, 10.5), 3 if fid == "retro_visor" else 5, 3)
                 p.setPen(Qt.PenStyle.NoPen)
@@ -2392,8 +2641,9 @@ class TypingPet(QWidget):
                             ("plasma_halo", "#22B8CF"), ("ember_ring", "#FF922B"), ("gold_orbit", "#FFD43B"),
                             ("rain_halo", "#4DABF7"), ("coin_halo", "#FCC419")):
             if tid_h in wear:
+                col = self._dye("top", hcol)
                 hy = top - 20 + math.sin(t * 2.8) * 2.5
-                p.setPen(QPen(QColor(hcol), 2.4))
+                p.setPen(QPen(col, 2.4))
                 p.setBrush(Qt.BrushStyle.NoBrush)
                 p.drawEllipse(QPointF(cx, hy), 20, 5.5)
                 p.setPen(Qt.PenStyle.NoPen)
@@ -2408,42 +2658,47 @@ class TypingPet(QWidget):
             for s in (-1, 1):
                 p.drawEllipse(QPointF(cx + s * 10.5, ey), 6.2, 6.2)
             p.drawLine(QPointF(cx - 4.3, ey), QPointF(cx + 4.3, ey))
-        if "pixel_shades" in wear:                              # 像素酷墨镜(通行证/签到限定)
+        if "pixel_shades" in wear:                              # 像素酷墨镜(通行证/签到限定,支持染色)
+            col = self._dye("face", "#111318")
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor("#111318"))
+            p.setBrush(col)
             p.drawRect(QRectF(cx - 20, ey - 4.5, 40, 3.2))
             for s in (-1, 1):
                 p.drawRect(QRectF(cx + s * 11 - 7, ey - 2, 14, 6.5))
                 p.setBrush(QColor("#FFFFFF"))
                 p.drawRect(QRectF(cx + s * 11 - 5, ey - 1, 3, 2.5))
                 p.drawRect(QRectF(cx + s * 11 - 1, ey + 1, 3, 2.2))
-                p.setBrush(QColor("#111318"))
+                p.setBrush(col)
         if "eyepatch" in wear:
-            p.setPen(QPen(QColor("#212529"), 1.4))
+            col = self._dye("face", "#212529")
+            p.setPen(QPen(col, 1.4))
             p.drawLine(QPointF(cx - 22, ey - 9), QPointF(cx + 20, ey - 3))
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor("#212529"))
+            p.setBrush(col)
             p.drawEllipse(QPointF(cx + 10, ey), 6.5, 6)
-        if "kanzashi" in wear:                                  # 耳边一支樱花发簪,垂两颗小坠子
+        if "kanzashi" in wear:                                  # 耳边一支樱花发簪,垂两颗小坠子(支持染色)
+            col = self._dye("ear", "#FFC9DE")
+            edge = col.darker(135) if self._has_dye("ear") else QColor("#E64980")
             bx, by = cx - 19, top + 4
             p.setPen(QPen(QColor("#B08968"), 1.6))
             p.drawLine(QPointF(bx - 8, by + 8), QPointF(bx + 6, by - 4))
             for i in range(5):
                 a = i / 5 * math.tau - math.pi / 2
-                p.setPen(QPen(QColor("#E64980"), 0.8))
-                p.setBrush(QColor("#FFC9DE"))
+                p.setPen(QPen(edge, 0.8))
+                p.setBrush(col)
                 p.drawEllipse(QPointF(bx + math.cos(a) * 3.6, by + math.sin(a) * 3.6), 2.8, 2.8)
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QColor("#FFD43B"))
             p.drawEllipse(QPointF(bx, by), 1.6, 1.6)
             sway = math.sin(t * 2.6) * 2
-            p.setPen(QPen(QColor("#E64980"), 0.8))
+            p.setPen(QPen(edge, 0.8))
             p.drawLine(QPointF(bx - 2, by + 4), QPointF(bx - 3 + sway, by + 13))
-            p.setBrush(QColor("#F783AC"))
+            p.setBrush(col.darker(112) if self._has_dye("ear") else QColor("#F783AC"))
             p.drawEllipse(QPointF(bx - 3 + sway, by + 14), 1.8, 1.8)
-        if "pirate" in wear:                                    # 黑色三角海盗帽 + 白骷髅
+        if "pirate" in wear:                                    # 三角海盗帽 + 白骷髅(支持染色)
+            col = self._dye("head", "#343A40")
             p.setPen(thin)
-            p.setBrush(QColor("#343A40"))
+            p.setBrush(col)
             hat = QPainterPath(QPointF(cx - 30, top + 2))
             hat.quadTo(cx - 18, top - 20, cx, top - 18)
             hat.quadTo(cx + 18, top - 20, cx + 30, top + 2)
@@ -2457,9 +2712,10 @@ class TypingPet(QWidget):
             p.setPen(QPen(QColor("#FFFFFF"), 1.2))
             p.drawLine(QPointF(cx - 5, top - 4), QPointF(cx + 5, top - 7))
             p.drawLine(QPointF(cx - 5, top - 7), QPointF(cx + 5, top - 4))
-        if "astro" in wear:                                     # 透明的宇航头盔罩住整个脑袋
+        if "astro" in wear:                                     # 透明宇航头盔罩住整个脑袋(支持染色)
+            col = self._dye("head", "#A5D8FF")
             p.setPen(QPen(QColor(255, 255, 255, 220), 2.2))
-            p.setBrush(QColor(165, 216, 255, 55))
+            p.setBrush(QColor(col.red(), col.green(), col.blue(), 65))
             p.drawEllipse(QPointF(cx, cy - 4), 36, 32)
             p.setPen(QPen(QColor(255, 255, 255, 160), 2))
             hl = QPainterPath(QPointF(cx - 24, cy - 18))
@@ -2472,30 +2728,170 @@ class TypingPet(QWidget):
             p.setBrush(QColor("#FA5252" if blink else "#C92A2A"))
             p.drawEllipse(QPointF(cx + 28, cy - 28), 2.4, 2.4)
         if "tangerine" in wear:
-            paint_capy_tangerine(p, cx, top, now, self.pose3d.yaw * 0.3)
-        if "vr" in wear:                                        # 赛博流光护目镜
+            if self._has_dye("top"):
+                col = self._dye("top", "#FF922B")
+                bob = math.sin(t * 2.4) * 1.0
+                ty = top - 5.5 + bob
+                p.setPen(QPen(col.darker(145), 1.1))
+                p.setBrush(clay_brush(cx, ty, 8.0, 6.2, col, self.pose3d.yaw))
+                p.drawEllipse(QPointF(cx, ty), 7.8, 6.0)
+                p.setPen(QPen(QColor("#2F9E44"), 1.0))
+                p.setBrush(QColor("#51CF66"))
+                p.drawEllipse(QPointF(cx + 3.2, ty - 6.2), 3.4, 1.8)
+            else:
+                paint_capy_tangerine(p, cx, top, now, self.pose3d.yaw * 0.3)
+        if "vr" in wear:                                        # 赛博流光护目镜(支持染色)
             visor = QRectF(cx - 19, ey - 5.5, 38, 10.5)
             vg = QLinearGradient(visor.topLeft(), visor.bottomRight())
-            vg.setColorAt(0.0, QColor(32, 201, 151, 215))
-            vg.setColorAt(0.5, QColor(59, 130, 246, 205))
-            vg.setColorAt(1.0, QColor(168, 85, 247, 215))
+            if self._has_dye("face"):
+                col = self._dye("face", "#3B82F6")
+                vg.setColorAt(0.0, QColor(col.lighter(125).red(), col.lighter(125).green(), col.lighter(125).blue(), 215))
+                vg.setColorAt(0.5, QColor(col.red(), col.green(), col.blue(), 215))
+                vg.setColorAt(1.0, QColor(col.darker(125).red(), col.darker(125).green(), col.darker(125).blue(), 220))
+            else:
+                vg.setColorAt(0.0, QColor(32, 201, 151, 215))
+                vg.setColorAt(0.5, QColor(59, 130, 246, 205))
+                vg.setColorAt(1.0, QColor(168, 85, 247, 215))
             p.setPen(QPen(QColor("#E6FCF5"), 1.3))
             p.setBrush(QBrush(vg))
             p.drawRoundedRect(visor, 4.5, 4.5)
             scan = cx - 14 + ((t * 28) % 28)
             p.setPen(QPen(QColor(255, 255, 255, 190), 1.5))
             p.drawLine(QPointF(scan, ey - 4), QPointF(scan + 3, ey + 3.5))
-        if "cyber_halo" in wear:                                # 双环旋转全息光环
+        if "cyber_halo" in wear:                                # 双环旋转全息光环(支持染色)
+            c1 = self._dye("top", "#20C997")
+            c2 = c1.lighter(135) if self._has_dye("top") else QColor("#A855F7")
             hy = top - 14 + math.sin(t * 2.8) * 1.8
             p.save()
             p.translate(cx, hy)
             p.setBrush(Qt.BrushStyle.NoBrush)
-            p.setPen(QPen(QColor(32, 201, 151, 190), 2.0))
+            p.setPen(QPen(QColor(c1.red(), c1.green(), c1.blue(), 200), 2.0))
             p.drawEllipse(QPointF(0, 0), 16, 4.2)
             p.rotate(math.sin(t * 1.8) * 12)
-            p.setPen(QPen(QColor(168, 85, 247, 165), 1.3, Qt.PenStyle.DashLine))
+            p.setPen(QPen(QColor(c2.red(), c2.green(), c2.blue(), 175), 1.3, Qt.PenStyle.DashLine))
             p.drawEllipse(QPointF(0, 0), 20, 5.2)
             p.restore()
+        # ---- 3.6 精绘 2.5D 黏土新装扮(全部支持染色与立体高光)
+        if "bunny_hood" in wear:                                # 兔耳毛绒浴帽
+            hc = self._dye("head", "#FFF0F6")
+            p.setPen(thin)
+            for s in (-1, 1):
+                p.save()
+                p.translate(cx + s * 11, top - 4)
+                p.rotate(s * 11)
+                p.setBrush(clay_brush(0, -11, 6, 13, hc, self.pose3d.yaw))
+                p.drawEllipse(QPointF(0, -11), 5.6, 12.8)
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor("#FFA8C5"))
+                p.drawEllipse(QPointF(0, -10.5), 2.8, 8.2)
+                p.restore()
+            p.setPen(thin)
+            p.setBrush(clay_brush(cx, top - 2, 26, 13, hc, self.pose3d.yaw))
+            p.drawChord(QRectF(cx - 26, top - 9, 52, 26), 0, 180 * 16)
+            p.setBrush(QColor("#FFFFFF"))
+            p.drawRoundedRect(QRectF(cx - 27, top + 2.5, 54, 6.5), 3.2, 3.2)
+        if "cloud_beret" in wear:                               # 云朵贝雷帽(蓬松云边+金星扣)
+            col = self._dye("head", "#748FFC")
+            p.setPen(thin)
+            p.setBrush(clay_brush(cx, top - 6, 24, 11, col, self.pose3d.yaw))
+            for dx, dy, rx, ry in ((-13, -3, 9.5, 7.5), (13, -3, 9.5, 7.5), (-5, -8, 11.5, 8.5), (6, -8, 11.0, 8.5)):
+                p.drawEllipse(QPointF(cx + dx, top + dy), rx, ry)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.drawRoundedRect(QRectF(cx - 19, top - 5, 38, 8), 4, 4)
+            p.save()
+            p.translate(cx + 9, top - 9)
+            p.setPen(QPen(QColor("#D98200"), 0.8))
+            p.setBrush(QColor("#FFD43B"))
+            p.drawPath(star_path(4.0, 0.45))
+            p.restore()
+        if "crystal_tiara" in wear:                             # 水晶冠冕(切面晶钻+双侧珍珠)
+            col = self._dye("head", "#D0BFFF")
+            p.setPen(QPen(col.darker(145), 1.2))
+            p.setBrush(clay_brush(cx, top - 6, 14, 12, col))
+            tiara = QPainterPath(QPointF(cx - 15, top + 2))
+            tiara.lineTo(cx - 11, top - 9)
+            tiara.lineTo(cx - 5, top - 4)
+            tiara.lineTo(cx, top - 15)
+            tiara.lineTo(cx + 5, top - 4)
+            tiara.lineTo(cx + 11, top - 9)
+            tiara.lineTo(cx + 15, top + 2)
+            tiara.closeSubpath()
+            p.drawPath(tiara)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor("#FFFFFF"))
+            p.drawPolygon([QPointF(cx, top - 11), QPointF(cx + 2.6, top - 6), QPointF(cx, top - 1.5), QPointF(cx - 2.6, top - 6)])
+            for s in (-1, 1):
+                p.drawEllipse(QPointF(cx + s * 9.5, top - 4), 1.8, 1.8)
+        if "mini_planet" in wear:                               # 迷你悬浮星球(土星倾斜双半环+小卫星)
+            col = self._dye("top", "#74C0FC")
+            hy = top - 16 + math.sin(t * 2.5) * 2.0
+            p.save()
+            p.translate(cx, hy)
+            p.rotate(-15)
+            # 后半圈星环
+            p.setPen(QPen(QColor("#FFD43B"), 2.0))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawArc(QRectF(-15, -4, 30, 8), 0, 180 * 16)
+            # 星球本体
+            p.setPen(thin)
+            p.setBrush(clay_brush(0, 0, 7.2, 7.2, col, self.pose3d.yaw))
+            p.drawEllipse(QPointF(0, 0), 7.0, 7.0)
+            # 前半圈星环
+            p.setPen(QPen(QColor("#FFE066"), 2.1))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawArc(QRectF(-15, -4, 30, 8), 180 * 16, 180 * 16)
+            # 绕行小卫星
+            mx, my = math.cos(t * 2.8) * 15, math.sin(t * 2.8) * 4
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor("#FFF3BF"))
+            p.drawEllipse(QPointF(mx, my), 2.1, 2.1)
+            p.restore()
+        if "sakura_halo" in wear:                               # 樱花浮环(柔粉光圈+5瓣绕行小樱花)
+            col = self._dye("top", "#FF8FAB")
+            hy = top - 14 + math.sin(t * 2.4) * 1.8
+            p.setPen(QPen(QColor(col.red(), col.green(), col.blue(), 170), 2.0))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawEllipse(QPointF(cx, hy), 16.5, 4.4)
+            p.setPen(Qt.PenStyle.NoPen)
+            for k in range(5):
+                a = t * 1.3 + k * math.tau / 5
+                px, py = cx + math.cos(a) * 16.5, hy + math.sin(a) * 4.4
+                p.setBrush(col.lighter(118) if k % 2 else col)
+                p.drawEllipse(QPointF(px, py), 2.6, 1.9)
+        if "star_glasses" in wear:                              # 星形墨镜(五角星镜框+酷炫镜片)
+            col = self._dye("face", "#FFD43B")
+            for s in (-1, 1):
+                p.save()
+                p.translate(cx + s * 10.5, ey)
+                p.setPen(QPen(col, 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+                p.setBrush(QColor(32, 36, 56, 210))
+                p.drawPath(star_path(7.2, 0.56))
+                p.setPen(QPen(QColor(255, 255, 255, 180), 1.1))
+                p.drawLine(QPointF(-2.5, -1.6), QPointF(-0.5, -3.2))
+                p.restore()
+            p.setPen(QPen(col, 1.6))
+            p.drawLine(QPointF(cx - 4.2, ey), QPointF(cx + 4.2, ey))
+        if "kitty_mask" in wear:                                # 机甲猫耳面罩(猫耳棱角+霓虹扫描条)
+            col = self._dye("face", "#9775FA")
+            glow = col.lighter(140) if self._has_dye("face") else QColor("#20C997")
+            p.setPen(QPen(col, 1.5))
+            p.setBrush(QColor(24, 26, 38, 225))
+            mask = QPainterPath(QPointF(cx - 19, ey - 4))
+            mask.lineTo(cx - 15, ey - 10.5)
+            mask.lineTo(cx - 8, ey - 5.5)
+            mask.lineTo(cx + 8, ey - 5.5)
+            mask.lineTo(cx + 15, ey - 10.5)
+            mask.lineTo(cx + 19, ey - 4)
+            mask.quadTo(cx + 20, ey + 5.5, cx + 13, ey + 5.5)
+            mask.lineTo(cx - 13, ey + 5.5)
+            mask.quadTo(cx - 20, ey + 5.5, cx - 19, ey - 4)
+            p.drawPath(mask)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(glow)
+            p.drawRoundedRect(QRectF(cx - 13.5, ey - 1.8, 27, 3.6), 1.8, 1.8)
+            scan = cx - 11 + ((t * 26) % 22)
+            p.setBrush(QColor("#FFFFFF"))
+            p.drawEllipse(QPointF(scan, ey), 2.1, 2.1)
         hand = next((w for w in wear if ACC_BY_ID.get(w, ("", "", 0, ""))[3] == "hand"), None)
         if hand:
             self._paint_hand(p, hand, t, cx + 28, self.EDGE - 4)
@@ -2504,25 +2900,27 @@ class TypingPet(QWidget):
                 self._paint_fx_item(p, w, t, cx, cy)
 
     def _paint_hand(self, p: QPainter, item: str, t: float, x: float, y: float) -> None:
-        """抱在右爪边上的小东西。(x, y) 是爪子的位置,东西往上竖着。"""
+        """抱在右爪边上的小东西。(x, y) 是爪子的位置,东西往上竖着。全部支持自由染色。"""
         out = QPen(QColor(OUTLINE), 1.2)
         p.save()
         p.translate(x, y)
         p.rotate(10 + math.sin(t * 2) * 4)
         if item == "balloon":
+            col = self._dye("hand", "#FF6B6B")
             sway = math.sin(t * 1.6) * 3
             p.setPen(QPen(QColor("#868E96"), 0.9))
             string = QPainterPath(QPointF(0, 0))
             string.cubicTo(3, -10, -3 + sway, -20, sway, -30)
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawPath(string)
-            p.setPen(QPen(QColor("#C92A2A"), 1))
-            p.setBrush(QColor("#FF6B6B"))
+            p.setPen(QPen(col.darker(135), 1))
+            p.setBrush(col)
             p.drawEllipse(QPointF(sway, -40), 9, 11)
             p.setBrush(QColor(255, 255, 255, 150))
             p.setPen(Qt.PenStyle.NoPen)
             p.drawEllipse(QPointF(sway - 3, -44), 2.4, 3.4)
         elif item == "icecream":
+            col = self._dye("hand", "#FFC9DE")
             p.setPen(out)
             p.setBrush(QColor("#E8B97A"))
             cone = QPainterPath(QPointF(-6, -14))
@@ -2530,20 +2928,21 @@ class TypingPet(QWidget):
             cone.lineTo(0, 2)
             cone.closeSubpath()
             p.drawPath(cone)
-            p.setBrush(QColor("#FFC9DE"))
+            p.setBrush(col)
             p.drawEllipse(QPointF(0, -18), 7.5, 6.5)
-            p.setBrush(QColor("#B2F2BB"))
+            p.setBrush(col.lighter(118) if self._has_dye("hand") else QColor("#B2F2BB"))
             p.drawEllipse(QPointF(0, -25), 6, 5.5)
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QColor("#E03131"))
             p.drawEllipse(QPointF(1, -31), 2.2, 2.2)
         elif item == "wand":
+            col = self._dye("hand", "#FFD43B")
             p.setPen(QPen(QColor("#495057"), 2.2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
             p.drawLine(QPointF(0, 0), QPointF(0, -24))
             p.translate(0, -28)
             p.rotate(t * 60)
-            p.setPen(QPen(QColor("#E8A200"), 0.8))
-            p.setBrush(QColor("#FFD43B"))
+            p.setPen(QPen(col.darker(135), 0.8))
+            p.setBrush(col)
             p.drawPath(star_path(6.0, 0.45))
             p.setPen(Qt.PenStyle.NoPen)
             for i in range(3):
@@ -2551,14 +2950,16 @@ class TypingPet(QWidget):
                 p.setBrush(QColor(255, 255, 255, int(120 + 120 * math.sin(t * 6 + i))))
                 p.drawEllipse(QPointF(math.cos(a) * 10, math.sin(a) * 10), 1.4, 1.4)
         elif item == "spatula":
+            col = self._dye("hand", "#CED4DA")
             p.setPen(QPen(QColor("#8D6E63"), 2.4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
             p.drawLine(QPointF(0, 0), QPointF(0, -18))
             p.setPen(out)
-            p.setBrush(QColor("#CED4DA"))
+            p.setBrush(col)
             p.drawRoundedRect(QRectF(-6, -30, 12, 12), 2, 2)
         elif item == "giftbox":
+            col = self._dye("hand", "#FF6B6B")
             p.setPen(out)
-            p.setBrush(QColor("#FF6B6B"))
+            p.setBrush(col)
             p.drawRect(QRectF(-8, -16, 16, 14))
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QColor("#FFD43B"))
@@ -2567,8 +2968,9 @@ class TypingPet(QWidget):
             p.drawEllipse(QPointF(-3, -18), 3, 2)
             p.drawEllipse(QPointF(3, -18), 3, 2)
         elif item == "sword":
+            col = self._dye("hand", "#E9ECEF")
             p.setPen(out)
-            p.setBrush(QColor("#E9ECEF"))
+            p.setBrush(col)
             blade = QPainterPath(QPointF(-2.4, -6))
             blade.lineTo(-2.4, -30)
             blade.lineTo(0, -34)
@@ -2581,19 +2983,21 @@ class TypingPet(QWidget):
             p.setBrush(QColor("#8D6E63"))
             p.drawRect(QRectF(-1.8, -4, 3.6, 6))
         elif item == "fan":
+            col = self._dye("hand", "#FFF0F6")
             p.setPen(QPen(QColor("#8D6E63"), 2))
             p.drawLine(QPointF(0, 0), QPointF(0, -14))
             p.setPen(out)
-            p.setBrush(QColor("#FFF0F6"))
+            p.setBrush(col)
             p.drawEllipse(QPointF(0, -24), 10, 10)
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor("#F783AC"))
+            p.setBrush(col.darker(125) if self._has_dye("hand") else QColor("#F783AC"))
             for i in range(5):
                 a = i / 5 * math.tau - math.pi / 2
                 p.drawEllipse(QPointF(math.cos(a) * 3, -24 + math.sin(a) * 3), 2.4, 2.4)
         elif item == "boba":                                    # 珍珠奶茶杯 + 吸管 + 黑糖珍珠
+            col = self._dye("hand", "#F3D5B5")
             p.setPen(out)
-            p.setBrush(QColor("#F3D5B5"))
+            p.setBrush(col)
             cup = QPainterPath(QPointF(-6.5, -20))
             cup.lineTo(6.5, -20)
             cup.lineTo(5.0, -3)
@@ -2609,8 +3013,9 @@ class TypingPet(QWidget):
             for bx, by in ((-2.6, -5.5), (0.4, -5.2), (2.8, -6.2), (-1.0, -7.5)):
                 p.drawEllipse(QPointF(bx, by), 1.4, 1.4)
         elif item == "coffee":                                  # 冰美式咖啡杯
+            col = self._dye("hand", "#6F4E37")
             p.setPen(out)
-            p.setBrush(QColor("#6F4E37"))
+            p.setBrush(col)
             cup = QPainterPath(QPointF(-6, -18))
             cup.lineTo(6, -18)
             cup.lineTo(4.5, -2)
@@ -2644,7 +3049,7 @@ class TypingPet(QWidget):
             p.drawEllipse(QPointF(0, -10), 2.5, 2.5)
         elif item == "fly_sword":                               # 灵气浮剑
             col = self._dye("hand", "#20C997")
-            p.setPen(QPen(QColor("#C3FAE8"), 1.4))
+            p.setPen(QPen(col.lighter(145), 1.4))
             p.setBrush(col)
             p.drawPolygon([QPointF(0, -34), QPointF(4, -14), QPointF(0, -10), QPointF(-4, -14)])
             p.setBrush(QColor("#FFD43B"))
@@ -2672,14 +3077,73 @@ class TypingPet(QWidget):
             p.drawRoundedRect(QRectF(-7.5, -18, 15, 15), 5, 5)
             p.setBrush(QColor("#D9480F"))
             p.drawRoundedRect(QRectF(-6.5, -21, 13, 4), 2, 2)
+        elif item == "plush_duck":                              # 3.6 小黄鸭玩偶(黏土球+小翅膀+黑豆眼)
+            col = self._dye("hand", "#FFD43B")
+            p.setPen(out)
+            p.setBrush(clay_brush(0, -10, 8, 7, col))
+            p.drawEllipse(QPointF(0, -10), 7.8, 6.4)
+            p.setBrush(clay_brush(1, -19, 6, 6, col))
+            p.drawEllipse(QPointF(1, -19), 5.8, 5.4)
+            p.setBrush(QColor("#FF922B"))
+            p.drawEllipse(QPointF(6.2, -18.5), 3.0, 1.7)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor("#1D1D1F"))
+            p.drawEllipse(QPointF(2.8, -20.2), 1.1, 1.1)
+            p.setBrush(col.darker(112))
+            p.drawEllipse(QPointF(-1.5, -10), 3.6, 2.2)
+        elif item == "magic_orb":                               # 3.6 悬浮水晶球(金座+星光内晕)
+            col = self._dye("hand", "#9775FA")
+            bob = math.sin(t * 3.0) * 1.6
+            p.setPen(QPen(QColor("#D98200"), 1.0))
+            p.setBrush(QColor("#FFD43B"))
+            p.drawRoundedRect(QRectF(-5.5, -9, 11, 4.5), 2, 2)
+            og = QRadialGradient(QPointF(-2.5, -21 + bob), 10)
+            og.setColorAt(0.0, QColor("#FFFFFF"))
+            og.setColorAt(0.35, col.lighter(125))
+            og.setColorAt(1.0, col)
+            p.setPen(QPen(QColor(255, 255, 255, 210), 1.3))
+            p.setBrush(QBrush(og))
+            p.drawEllipse(QPointF(0, -19 + bob), 8.5, 8.5)
+        elif item == "sakura_lantern":                          # 3.6 和风发光纸灯笼(暖光+流苏+樱花)
+            col = self._dye("hand", "#FF8FAB")
+            p.setPen(QPen(QColor("#5C4033"), 1.8))
+            p.drawLine(QPointF(0, -28), QPointF(0, -34))
+            p.setPen(out)
+            p.setBrush(clay_brush(0, -17, 8, 10, col))
+            p.drawEllipse(QPointF(0, -17), 7.6, 9.8)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor("#2B2D42"))
+            p.drawRect(QRectF(-4.5, -27.5, 9, 2.6))
+            p.drawRect(QRectF(-4.0, -7.8, 8, 2.4))
+            p.setBrush(QColor("#FFD43B"))
+            p.drawLine(QPointF(0, -5.4), QPointF(0, -1.2))
+            p.drawEllipse(QPointF(0, -17), 2.3, 2.3)
+        elif item == "star_wand":                               # 3.6 星月魔导法杖(弯月+自转金星)
+            col = self._dye("hand", "#FFD43B")
+            p.setPen(QPen(QColor("#6741D9"), 2.4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            p.drawLine(QPointF(0, 0), QPointF(0, -23))
+            p.translate(0, -28)
+            p.setPen(QPen(col.darker(130), 1.0))
+            p.setBrush(col)
+            moon = QPainterPath()
+            moon.addEllipse(QPointF(0, 0), 7.5, 7.5)
+            cut = QPainterPath()
+            cut.addEllipse(QPointF(3.2, -1.6), 6.0, 6.0)
+            p.drawPath(moon.subtracted(cut))
+            p.rotate(t * 75)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor("#FFF3BF"))
+            p.drawPath(star_path(4.0, 0.45))
         p.restore()
 
     def _paint_fx_item(self, p: QPainter, fx: str, t: float, cx: float, cy: float) -> None:
-        """特效类装扮:绕着宠物飘的小东西。"""
+        """特效类装扮:绕着宠物飘的小东西(支持自由染色)。"""
         p.save()
+        has_fx_dye = self._has_dye("fx")
+        fx_col = self._dye("fx", "#FF8FAB")
         rnd = random.Random(hash(fx) & 0xFFFF)
         n = {"hearts": 4, "bubbles": 5, "snowfall": 8, "petals": 7, "fireflies": 5, "stardust": 9, "sparkle": 6,
-             "macaron_fx": 5, "pixel_stars": 7}.get(fx, 5)
+             "macaron_fx": 5, "pixel_stars": 7, "prism_rings": 6, "meteor_fx": 5}.get(fx, 5)
         for i in range(n):
             seed_x = rnd.uniform(-48, 48)
             speed = rnd.uniform(0.18, 0.32)
@@ -2688,7 +3152,8 @@ class TypingPet(QWidget):
                 x = cx + seed_x * 0.85 + math.sin(t * 1.8 + i) * 5
                 y = self.EDGE - 8 - ph * 68
                 p.setOpacity(math.sin(math.pi * ph))
-                mcol = QColor(["#FF8FAB", "#A9E34B", "#FFD43B", "#B197FC", "#74C0FC"][i % 5])
+                mcol = (fx_col.lighter(100 + (i % 3) * 14) if has_fx_dye
+                        else QColor(["#FF8FAB", "#A9E34B", "#FFD43B", "#B197FC", "#74C0FC"][i % 5]))
                 p.setPen(QPen(QColor("#4A3B32"), 1.0))
                 p.setBrush(mcol)
                 p.drawRoundedRect(QRectF(x - 5, y - 3.5, 10, 7), 3.5, 3.5)
@@ -2701,7 +3166,7 @@ class TypingPet(QWidget):
                 y = cy - 60 + ph * 68
                 p.setOpacity(math.sin(math.pi * ph))
                 p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(QColor(["#FFD43B", "#63E6BE", "#B197FC", "#FF6B8A"][i % 4]))
+                p.setBrush(fx_col if has_fx_dye else QColor(["#FFD43B", "#63E6BE", "#B197FC", "#FF6B8A"][i % 4]))
                 p.drawRect(QRectF(x - 2.5, y - 2.5, 5, 5))
                 continue
             if fx in ("hearts", "bubbles"):                       # 往上冒
@@ -2711,14 +3176,15 @@ class TypingPet(QWidget):
                 p.setOpacity(a)
                 if fx == "hearts":
                     p.setPen(Qt.PenStyle.NoPen)
-                    p.setBrush(QColor("#FF8FAB"))
+                    p.setBrush(fx_col if has_fx_dye else QColor("#FF8FAB"))
                     hp = QPainterPath(QPointF(x, y + 3))
                     hp.cubicTo(x - 4.5, y, x - 3.5, y - 3.8, x, y - 1.4)
                     hp.cubicTo(x + 3.5, y - 3.8, x + 4.5, y, x, y + 3)
                     p.drawPath(hp)
                 else:
-                    p.setPen(QPen(QColor(165, 216, 255, 220), 1))
-                    p.setBrush(QColor(255, 255, 255, 40))
+                    bc = fx_col if has_fx_dye else QColor(165, 216, 255)
+                    p.setPen(QPen(QColor(bc.red(), bc.green(), bc.blue(), 220), 1))
+                    p.setBrush(QColor(bc.red(), bc.green(), bc.blue(), 55))
                     r = 3 + 2.5 * (i % 3)
                     p.drawEllipse(QPointF(x, y), r, r)
                     p.setPen(Qt.PenStyle.NoPen)
@@ -2732,14 +3198,15 @@ class TypingPet(QWidget):
                 p.rotate(t * 60 + i * 40)
                 p.setPen(Qt.PenStyle.NoPen)
                 if fx == "snowfall":
-                    p.setBrush(QColor("#FFFFFF"))
+                    sc = fx_col if has_fx_dye else QColor("#FFFFFF")
+                    p.setBrush(sc)
                     p.drawEllipse(QPointF(0, 0), 1.8, 1.8)
-                    p.setPen(QPen(QColor(255, 255, 255, 200), 0.8))
+                    p.setPen(QPen(QColor(sc.red(), sc.green(), sc.blue(), 200), 0.8))
                     for k in range(3):
                         p.rotate(60)
                         p.drawLine(QPointF(-3.4, 0), QPointF(3.4, 0))
                 else:
-                    p.setBrush(QColor("#FFC9DE"))
+                    p.setBrush(fx_col if has_fx_dye else QColor("#FFC9DE"))
                     p.drawEllipse(QPointF(0, 0), 3.6, 2.2)
                 p.rotate(-(t * 60 + i * 40))
                 p.translate(-x, -y)
@@ -2747,9 +3214,10 @@ class TypingPet(QWidget):
                 x = cx + math.sin(t * 0.7 + i * 2.1) * 46
                 y = cy - 18 + math.sin(t * 0.9 + i * 1.3) * 22
                 glow = 0.5 + 0.5 * math.sin(t * 3 + i)
+                fc = fx_col if has_fx_dye else QColor(255, 236, 120)
                 g = QRadialGradient(QPointF(x, y), 6)
-                g.setColorAt(0, QColor(255, 236, 120, int(240 * glow)))
-                g.setColorAt(1, QColor(255, 236, 120, 0))
+                g.setColorAt(0, QColor(fc.red(), fc.green(), fc.blue(), int(240 * glow)))
+                g.setColorAt(1, QColor(fc.red(), fc.green(), fc.blue(), 0))
                 p.setOpacity(1.0)
                 p.setPen(Qt.PenStyle.NoPen)
                 p.setBrush(QBrush(g))
@@ -2761,7 +3229,7 @@ class TypingPet(QWidget):
                 p.setOpacity(tw)
                 p.translate(x, y)
                 p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(QColor(["#FFF3BF", "#D0EBFF", "#E5DBFF"][i % 3]))
+                p.setBrush(fx_col if has_fx_dye else QColor(["#FFF3BF", "#D0EBFF", "#E5DBFF"][i % 3]))
                 p.drawPath(star_path(2.2 + 1.6 * tw, 0.4))
                 p.translate(-x, -y)
             elif fx == "sparkle":                                 # 绕着身子转的一圈魔法光点
@@ -2773,7 +3241,7 @@ class TypingPet(QWidget):
                 p.translate(x, y)
                 p.rotate(t * 120)
                 p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(QColor(["#B197FC", "#FFD43B", "#FFFFFF"][i % 3]))
+                p.setBrush(fx_col if has_fx_dye else QColor(["#B197FC", "#FFD43B", "#FFFFFF"][i % 3]))
                 p.drawPath(star_path(3.2, 0.35))
                 p.rotate(-t * 120)
                 p.translate(-x, -y)
@@ -2782,16 +3250,42 @@ class TypingPet(QWidget):
                 y = self.EDGE - 8 - ph * 56
                 p.setOpacity(math.sin(math.pi * ph) * 0.9)
                 p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(QColor(["#FFF3BF", "#A5D8FF", "#FFD8A8"][i % 3]))
+                p.setBrush(fx_col if has_fx_dye else QColor(["#FFF3BF", "#A5D8FF", "#FFD8A8"][i % 3]))
                 p.drawEllipse(QPointF(x, y), 2.3, 2.3)
             elif fx == "music_fx":                                # 漂浮音符
                 x = cx + seed_x * 0.85 + math.sin(t * 2.2 + i) * 5
                 y = self.EDGE - 6 - ph * 64
                 p.setOpacity(math.sin(math.pi * ph))
                 p.setFont(_emoji_font(12))
-                p.setPen(QColor(["#FF8787", "#74C0FC", "#B197FC"][i % 3]))
+                p.setPen(fx_col if has_fx_dye else QColor(["#FF8787", "#74C0FC", "#B197FC"][i % 3]))
                 p.drawText(QRectF(x - 8, y - 8, 16, 16), "♪" if i % 2 == 0 else "♫",
                            QTextOption(Qt.AlignmentFlag.AlignCenter))
+            elif fx == "prism_rings":                             # 3.6 棱镜全息浮环(霓虹菱片绕行)
+                a = t * 1.5 + i / n * math.tau
+                x, y = cx + math.cos(a) * 43, cy - 8 + math.sin(a) * 15
+                if y > self.EDGE:
+                    continue
+                pc = fx_col if has_fx_dye else QColor(["#20C997", "#74C0FC", "#B197FC", "#F06595"][i % 4])
+                p.setOpacity(0.92 if math.sin(a) > 0 else 0.55)
+                p.setPen(QPen(QColor("#FFFFFF"), 0.8))
+                p.setBrush(pc)
+                p.drawPolygon([QPointF(x, y - 4), QPointF(x + 3.2, y), QPointF(x, y + 4), QPointF(x - 3.2, y)])
+            elif fx == "meteor_fx":                               # 3.6 流星环绕(带尾迹小流星)
+                a = t * 1.8 + i / n * math.tau
+                x, y = cx + math.cos(a) * 42, cy - 10 + math.sin(a) * 16
+                if y > self.EDGE:
+                    continue
+                mc = fx_col if has_fx_dye else QColor(["#FFD43B", "#B197FC", "#74C0FC"][i % 3])
+                tx, ty = cx + math.cos(a - 0.25) * 42, cy - 10 + math.sin(a - 0.25) * 16
+                p.setOpacity(0.85)
+                p.setPen(QPen(QColor(mc.red(), mc.green(), mc.blue(), 150), 2.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+                p.drawLine(QPointF(tx, ty), QPointF(x, y))
+                p.save()
+                p.translate(x, y)
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(mc)
+                p.drawPath(star_path(3.2, 0.42))
+                p.restore()
         p.restore()
 
     # ---- 动作(2.5 + 3.1 特殊动作)
@@ -3249,23 +3743,26 @@ class TypingPet(QWidget):
         draw_weapon(p, weapon, 13)
         p.restore()
 
-    # ---- 2.4 新装扮
+    # ---- 2.4 新装扮(全部支持自由染色)
     def _paint_wear2(self, p: QPainter, now: float, cx: float, cy: float, ey: float, wear: set, out: QPen) -> None:
         thin = QPen(QColor(OUTLINE), 1.3)
         thin.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         top = cy - 22
         t = now - self._t0
         if "blush" in wear:                                 # 两团粉粉的腮红,带三道小斜线
+            col = self._dye("face", "#FF7896")
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor(255, 120, 150, 120))
+            p.setBrush(QColor(col.red(), col.green(), col.blue(), 125))
             for s in (-1, 1):
                 p.drawEllipse(QPointF(cx + s * 17, ey + 6), 5.2, 3.2)
-            p.setPen(QPen(QColor(230, 80, 120, 170), 0.9))
+            edge = col.darker(120)
+            p.setPen(QPen(QColor(edge.red(), edge.green(), edge.blue(), 175), 0.9))
             for s in (-1, 1):
                 for k in (-2, 0, 2):
                     p.drawLine(QPointF(cx + s * 17 + k - 1, ey + 7.2), QPointF(cx + s * 17 + k + 1, ey + 4.8))
         if "nerd" in wear:                                  # 圆框眼镜:透明镜片
-            p.setPen(QPen(QColor("#5C4033"), 1.5))
+            col = self._dye("face", "#5C4033")
+            p.setPen(QPen(col, 1.5))
             p.setBrush(QColor(255, 255, 255, 50))
             for s in (-1, 1):
                 p.drawEllipse(QPointF(cx + s * 10, ey), 6.4, 6.4)
@@ -3274,15 +3771,17 @@ class TypingPet(QWidget):
             for s in (-1, 1):
                 p.drawLine(QPointF(cx + s * 10 - 3.4, ey - 2.4), QPointF(cx + s * 10 - 1.6, ey - 4))
         if "monocle" in wear:                               # 单片眼镜 + 一条金链子
-            p.setPen(QPen(QColor("#B8860B"), 1.6))
+            col = self._dye("face", "#B8860B")
+            p.setPen(QPen(col, 1.6))
             p.setBrush(QColor(255, 255, 255, 60))
             p.drawEllipse(QPointF(cx + 10, ey), 6.6, 6.6)
             chain = QPainterPath(QPointF(cx + 15.5, ey + 4))
             chain.cubicTo(cx + 20, ey + 12, cx + 24, ey + 14, cx + 25, ey + 22)
-            p.setPen(QPen(QColor("#DAA520"), 0.9, Qt.PenStyle.DotLine))
+            p.setPen(QPen(col.lighter(118), 0.9, Qt.PenStyle.DotLine))
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawPath(chain)
         if "cherry" in wear:                                # 耳边:一对樱桃
+            col = self._dye("ear", "#F03E3E")
             fx, fy = cx - 20, top + 6
             p.setPen(QPen(QColor("#2F9E44"), 1.2))
             p.setBrush(Qt.BrushStyle.NoBrush)
@@ -3290,8 +3789,8 @@ class TypingPet(QWidget):
             stem.quadTo(fx, fy - 7, fx + 2, fy - 8)
             stem.quadTo(fx + 2, fy - 2, fx + 4, fy + 2)
             p.drawPath(stem)
-            p.setPen(QPen(QColor("#A61E4D"), 1))
-            p.setBrush(QColor("#F03E3E"))
+            p.setPen(QPen(col.darker(135), 1))
+            p.setBrush(col)
             for dx in (-3, 4):
                 p.drawEllipse(QPointF(fx + dx, fy + 4), 3.4, 3.4)
             p.setPen(Qt.PenStyle.NoPen)
@@ -3299,29 +3798,32 @@ class TypingPet(QWidget):
             for dx in (-3, 4):
                 p.drawEllipse(QPointF(fx + dx - 1.1, fy + 2.8), 0.9, 0.9)
         if "starclip" in wear:                              # 耳边:一颗会闪的星星发卡
+            col = self._dye("ear", "#FFD43B")
             p.save()
             p.translate(cx + 20, top + 5)
             p.rotate(15)
-            p.setPen(QPen(QColor("#E8A200"), 1))
-            p.setBrush(QColor("#FFD43B"))
+            p.setPen(QPen(col.darker(135), 1))
+            p.setBrush(col)
             p.drawPath(star_path(6.0, 0.45))
             tw = 0.5 + 0.5 * math.sin(t * 5)
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QColor(255, 255, 255, int(90 + 140 * tw)))
             p.drawEllipse(QPointF(-1.2, -1.4), 1.2, 1.2)
             p.restore()
-        if "chef" in wear:                                  # 白色高高的厨师帽
+        if "chef" in wear:                                  # 高高的厨师帽(支持染色)
+            col = self._dye("head", "#FFFFFF")
             p.setPen(thin)
-            p.setBrush(QColor("#FFFFFF"))
+            p.setBrush(col)
             for dx, dy, r in ((-9, -10, 8.5), (9, -10, 8.5), (0, -16, 9.5)):
                 p.drawEllipse(QPointF(cx + dx, top + dy), r, r)
             p.drawRoundedRect(QRectF(cx - 14, top - 9, 28, 14), 3, 3)
-            p.setPen(QPen(QColor(200, 200, 210), 0.9))
+            p.setPen(QPen(col.darker(122), 0.9))
             for dx in (-6, 0, 6):
                 p.drawLine(QPointF(cx + dx, top - 5), QPointF(cx + dx, top + 3))
-        if "witch" in wear:                                 # 尖尖的魔法帽,帽尖歪一下,带金色星星
+        if "witch" in wear:                                 # 尖尖的魔法帽,帽尖歪一下,带金色星星(支持染色)
+            col = self._dye("head", "#5F3DC4")
             p.setPen(thin)
-            p.setBrush(QColor("#5F3DC4"))
+            p.setBrush(col)
             p.drawEllipse(QPointF(cx, top + 4), 30, 5.5)
             cone = QPainterPath(QPointF(cx - 15, top + 3))
             cone.cubicTo(cx - 10, top - 14, cx - 2, top - 26, cx + 14, top - 30)
@@ -3335,9 +3837,10 @@ class TypingPet(QWidget):
             p.translate(cx + 2, top - 12)
             p.drawPath(star_path(3.4, 0.45))
             p.restore()
-        if "santa" in wear:                                 # 圣诞帽:红帽子、白毛边、垂下来的小球
+        if "santa" in wear:                                 # 圣诞帽:帽子、白毛边、垂下来的小球(支持染色)
+            col = self._dye("head", "#E03131")
             p.setPen(thin)
-            p.setBrush(QColor("#E03131"))
+            p.setBrush(col)
             hat = QPainterPath(QPointF(cx - 24, top + 5))
             hat.cubicTo(cx - 20, top - 16, cx + 8, top - 22, cx + 26, top - 6)
             hat.lineTo(cx + 24, top + 5)
@@ -3347,39 +3850,43 @@ class TypingPet(QWidget):
             p.drawRoundedRect(QRectF(cx - 27, top + 1, 54, 8.5), 4.2, 4.2)
             sway = math.sin(t * 2.2) * 1.5
             p.drawEllipse(QPointF(cx + 28 + sway, top - 4), 4.4, 4.4)
-        if "horns" in wear:                                 # 一对小龙角
-            p.setPen(QPen(QColor("#8C6D1F"), 1.2))
-            p.setBrush(QColor("#F5D57A"))
+        if "horns" in wear:                                 # 一对小龙角(支持染色)
+            col = self._dye("head", "#F5D57A")
+            edge = col.darker(155)
+            p.setPen(QPen(edge, 1.2))
+            p.setBrush(col)
             for s in (-1, 1):
                 horn = QPainterPath(QPointF(cx + s * 8, top + 4))
                 horn.cubicTo(cx + s * 9, top - 6, cx + s * 14, top - 12, cx + s * 18, top - 13)
                 horn.cubicTo(cx + s * 16, top - 7, cx + s * 16, top - 1, cx + s * 15, top + 5)
                 horn.closeSubpath()
                 p.drawPath(horn)
-                p.setPen(QPen(QColor(140, 109, 31, 140), 0.9))
+                p.setPen(QPen(QColor(edge.red(), edge.green(), edge.blue(), 145), 0.9))
                 for k in (0.35, 0.6):
                     p.drawLine(QPointF(cx + s * (9 + 6 * k), top + 3 - 12 * k),
                                QPointF(cx + s * (14 + 2 * k), top + 3 - 11 * k))
-                p.setPen(QPen(QColor("#8C6D1F"), 1.2))
-        if "sprout" in wear:                                # 头顶一棵左右摇的小芽
+                p.setPen(QPen(edge, 1.2))
+        if "sprout" in wear:                                # 头顶一棵左右摇的小芽(支持染色)
+            col = self._dye("top", "#69DB7C")
             sway = math.sin(t * 2.6) * 3
-            p.setPen(QPen(QColor("#2F9E44"), 1.6))
+            p.setPen(QPen(col.darker(140), 1.6))
             p.setBrush(Qt.BrushStyle.NoBrush)
             stem = QPainterPath(QPointF(cx, top + 3))
             stem.quadTo(cx, top - 6, cx + sway, top - 11)
             p.drawPath(stem)
-            p.setPen(QPen(QColor("#2B8A3E"), 1))
-            p.setBrush(QColor("#69DB7C"))
+            p.setPen(QPen(col.darker(145), 1))
+            p.setBrush(col)
             for s in (-1, 1):
                 leaf = QPainterPath(QPointF(cx + sway, top - 11))
                 leaf.quadTo(cx + sway + s * 7, top - 18, cx + sway + s * 10, top - 11)
                 leaf.quadTo(cx + sway + s * 5, top - 8, cx + sway, top - 11)
                 p.drawPath(leaf)
-        if "cloud" in wear:                                 # 头顶一朵飘着的小雨云,往下滴雨
+        if "cloud" in wear:                                 # 头顶一朵飘着的小雨云,往下滴雨(支持染色)
+            col = self._dye("top", "#DEE2E6")
             bob = math.sin(t * 1.8) * 1.5
             cy2 = top - 18 + bob
-            p.setPen(QPen(QColor("#868E96"), 1))
-            p.setBrush(QColor("#DEE2E6"))
+            p.setPen(QPen(col.darker(135), 1))
+            p.setBrush(col)
             for dx, dy, r in ((-8, 1, 6), (0, -3, 8), (8, 1, 6)):
                 p.drawEllipse(QPointF(cx + dx, cy2 + dy), r, r)
             p.setPen(Qt.PenStyle.NoPen)
@@ -3388,11 +3895,17 @@ class TypingPet(QWidget):
             for k, dx in enumerate((-7, 0, 7)):
                 ph = (t * 1.6 + k * 0.33) % 1.0
                 p.drawEllipse(QPointF(cx + dx, cy2 + 8 + ph * 12), 1.1, 2.0)
-        if "aurora" in wear:                                # 满级:绕着头转的极光星环,颜色慢慢变
+        if "aurora" in wear:                                # 满级:绕着头转的极光星环(支持染色)
+            has_td = self._has_dye("top")
+            tcol = self._dye("top", "#74C0FC")
             p.save()
             p.setBrush(Qt.BrushStyle.NoBrush)
             for k in range(3):
-                c = QColor.fromHsvF(((t * 0.08) + k * 0.12) % 1.0, 0.55, 1.0, 0.55 - k * 0.12)
+                if has_td:
+                    c = QColor(tcol.lighter(100 + k * 14))
+                    c.setAlphaF(0.65 - k * 0.14)
+                else:
+                    c = QColor.fromHsvF(((t * 0.08) + k * 0.12) % 1.0, 0.55, 1.0, 0.55 - k * 0.12)
                 p.setPen(QPen(c, 2.4 - k * 0.6))
                 p.drawEllipse(QPointF(cx, top - 12 + k * 1.2), 17 + k * 3, 4.2 + k * 0.8)
             for k in range(4):
@@ -3401,25 +3914,37 @@ class TypingPet(QWidget):
                 p.save()
                 p.translate(sx, sy)
                 p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(QColor.fromHsvF(((t * 0.08) + k * 0.2) % 1.0, 0.35, 1.0, 0.95))
+                sc = QColor(tcol.lighter(120)) if has_td else QColor.fromHsvF(((t * 0.08) + k * 0.2) % 1.0, 0.35, 1.0, 0.95)
+                p.setBrush(sc)
                 p.drawPath(star_path(2.6, 0.45))
                 p.restore()
             p.restore()
 
     def _acc_fairy(self, p: QPainter, now: float, cx: float, cy: float) -> None:
+        has_bd = self._has_dye("body")
+        bcol = self._dye("body", "#99E9F2")
         flap = math.sin((now - self._t0) * 6) * 4
         for s in (-1, 1):
             for big, (dy, rx, ry, a) in enumerate(((-6, 18, 11, 0.55), (6, 12, 8, 0.45))):
                 wing = QPainterPath()
                 wing.addEllipse(QPointF(cx + s * (34 + flap * 0.4), cy + dy - flap * 0.6 * (1 - big)), rx, ry)
                 g = QLinearGradient(cx, cy - 20, cx + s * 50, cy + 10)
-                g.setColorAt(0, QColor.fromHsvF(0.55, 0.35, 1.0, a))
-                g.setColorAt(1, QColor.fromHsvF(0.85, 0.35, 1.0, a))
+                if has_bd:
+                    c0 = QColor(bcol.lighter(120))
+                    c0.setAlphaF(a + 0.15)
+                    c1 = QColor(bcol)
+                    c1.setAlphaF(a + 0.15)
+                    g.setColorAt(0, c0)
+                    g.setColorAt(1, c1)
+                else:
+                    g.setColorAt(0, QColor.fromHsvF(0.55, 0.35, 1.0, a))
+                    g.setColorAt(1, QColor.fromHsvF(0.85, 0.35, 1.0, a))
                 p.setPen(QPen(QColor(255, 255, 255, 200), 1))
                 p.setBrush(QBrush(g))
                 p.drawPath(wing)
 
     def _acc_raincoat(self, p: QPainter, cx: float, out: QPen) -> None:
+        col = self._dye("body", "#FFD43B")
         y = self.EDGE - 8
         coat = QPainterPath(QPointF(cx - 33, y - 1))
         coat.quadTo(cx, y + 3, cx + 33, y - 1)
@@ -3427,17 +3952,18 @@ class TypingPet(QWidget):
         coat.lineTo(cx - 36, self.EDGE + 1)
         coat.closeSubpath()
         p.setPen(out)
-        p.setBrush(QColor("#FFD43B"))
+        p.setBrush(col)
         p.drawPath(coat)
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor("#E8A200"))
+        p.setBrush(col.darker(135))
         for k in (-3, 3):
             p.drawEllipse(QPointF(cx + k, y + 5), 1.4, 1.4)
 
     def _acc_overalls(self, p: QPainter, cx: float, out: QPen) -> None:
+        col = self._dye("body", "#4C6EF5")
         y = self.EDGE - 7
         p.setPen(out)
-        p.setBrush(QColor("#4C6EF5"))
+        p.setBrush(col)
         p.drawRoundedRect(QRectF(cx - 15, y, 30, 12), 3, 3)
         for s in (-1, 1):
             strap = QPainterPath(QPointF(cx + s * 11, y + 1))
@@ -3454,9 +3980,10 @@ class TypingPet(QWidget):
         p.drawRoundedRect(QRectF(cx - 5, y + 4, 10, 5), 1.5, 1.5)
 
     def _acc_tie(self, p: QPainter, cx: float, out: QPen) -> None:
+        col = self._dye("neck", "#1971C2")
         y = self.EDGE - 6
         p.setPen(QPen(QColor(OUTLINE), 1.1))
-        p.setBrush(QColor("#1971C2"))
+        p.setBrush(col)
         p.drawPolygon(QPolygonF([QPointF(cx - 3.5, y - 2), QPointF(cx + 3.5, y - 2), QPointF(cx + 2, y + 2),
                                  QPointF(cx - 2, y + 2)]))
         body = QPainterPath(QPointF(cx - 2, y + 2))
@@ -3471,9 +3998,10 @@ class TypingPet(QWidget):
         p.drawLine(QPointF(cx - 3.5, y + 10), QPointF(cx + 3.8, y + 7.5))
 
     def _acc_pearl(self, p: QPainter, cx: float) -> None:
+        col = self._dye("neck", "#FFF8F0")
         y = self.EDGE - 5
-        p.setPen(QPen(QColor(200, 190, 180), 0.8))
-        p.setBrush(QColor("#FFF8F0"))
+        p.setPen(QPen(col.darker(130), 0.8))
+        p.setBrush(col)
         for k in range(-5, 6):
             x = cx + k * 5.2
             yy = y - 2 + (1 - (k / 5.5) ** 2) * 4.5
@@ -3484,19 +4012,21 @@ class TypingPet(QWidget):
             p.drawEllipse(QPointF(cx + k * 5.2 - 0.7, y - 2 + (1 - (k / 5.5) ** 2) * 4.5 - 0.8), 0.7, 0.7)
 
     def _acc_cape(self, p: QPainter, cx: float, cy: float, out: QPen) -> None:
+        col = self._dye("body", "#D9363E")
         cape = QPainterPath(QPointF(cx - 24, cy - 4))
         cape.cubicTo(cx - 38, cy + 6, cx - 42, cy + 18, cx - 44, self.EDGE + 2)
         cape.lineTo(cx + 44, self.EDGE + 2)
         cape.cubicTo(cx + 42, cy + 18, cx + 38, cy + 6, cx + 24, cy - 4)
         cape.closeSubpath()
         p.setPen(out)
-        p.setBrush(QColor("#D9363E"))
+        p.setBrush(col)
         p.drawPath(cape)
         p.setPen(QPen(QColor(255, 255, 255, 60), 1.2))
         for k in (-34, 34):
             p.drawLine(QPointF(cx + k * 0.75, cy + 2), QPointF(cx + k, self.EDGE - 2))
 
     def _acc_hoodie(self, p: QPainter, cx: float, out: QPen) -> None:
+        col = self._dye("body", "#9AA8F0")
         y = self.EDGE - 6
         band = QPainterPath(QPointF(cx - 32, y - 1))
         band.quadTo(cx, y + 4, cx + 32, y - 1)
@@ -3504,7 +4034,7 @@ class TypingPet(QWidget):
         band.lineTo(cx - 34, self.EDGE + 1)
         band.closeSubpath()
         p.setPen(out)
-        p.setBrush(QColor("#9AA8F0"))
+        p.setBrush(col)
         p.drawPath(band)
         p.setPen(QPen(QColor("#FFFFFF"), 1.3))                  # 两根帽绳
         for k in (-6, 6):
@@ -3512,9 +4042,10 @@ class TypingPet(QWidget):
         p.setPen(out)
 
     def _acc_sailor(self, p: QPainter, cx: float, out: QPen) -> None:
+        col = self._dye("body", "#2F4A8A")
         y = self.EDGE - 7
         p.setPen(out)
-        p.setBrush(QColor("#2F4A8A"))
+        p.setBrush(col)
         for s in (-1, 1):
             collar = QPainterPath(QPointF(cx, y + 6))
             collar.lineTo(cx + s * 30, y - 2)
@@ -3536,10 +4067,11 @@ class TypingPet(QWidget):
         p.drawEllipse(QPointF(cx, y + 6), 1.8, 1.8)
 
     def _acc_bell(self, p: QPainter, cx: float, out: QPen) -> None:
+        col = self._dye("neck", "#E5383B")
         y = self.EDGE - 5
         band = QPainterPath(QPointF(cx - 29, y - 2))
         band.quadTo(cx, y + 3, cx + 29, y - 2)
-        pen = QPen(QColor("#E5383B"), 3.2)
+        pen = QPen(col, 3.2)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         p.setPen(pen)
         p.setBrush(Qt.BrushStyle.NoBrush)
@@ -3555,20 +4087,22 @@ class TypingPet(QWidget):
         p.drawEllipse(QPointF(cx + swing, y + 5.4), 1.0, 1.0)
 
     def _acc_bowtie(self, p: QPainter, cx: float, out: QPen) -> None:
+        col = self._dye("neck", "#3D3D4E")
         y = self.EDGE - 3.5
         p.setPen(QPen(QColor(OUTLINE), 1.1))
-        p.setBrush(QColor("#3D3D4E"))
+        p.setBrush(col)
         for s in (-1, 1):
             wing = QPainterPath(QPointF(cx, y))
             wing.lineTo(cx + s * 8, y - 4.5)
             wing.lineTo(cx + s * 8, y + 4.5)
             wing.closeSubpath()
             p.drawPath(wing)
-        p.setBrush(QColor("#5A5A70"))
+        p.setBrush(col.lighter(120))
         p.drawRoundedRect(QRectF(cx - 2.2, y - 2.6, 4.4, 5.2), 1.2, 1.2)
 
     def _acc_scarf(self, p: QPainter, cx: float, out: QPen) -> None:
-        """围巾:围在输入框边缘上方,一条小尾巴垂在一侧。"""
+        """围巾:围在输入框边缘上方,一条小尾巴垂在一侧(支持染色)。"""
+        col = self._dye("neck", "#FF6B6B")
         y = self.EDGE - 6
         p.setPen(out)
         tail = QPainterPath(QPointF(cx + 12, y + 4))          # 垂下来的围巾尾巴,搭在输入框边上
@@ -3576,13 +4110,13 @@ class TypingPet(QWidget):
         tail.lineTo(cx + 24, y + 15)
         tail.lineTo(cx + 13, y + 15.5)
         tail.closeSubpath()
-        p.setBrush(QColor("#F03E3E"))
+        p.setBrush(col.darker(115))
         p.drawPath(tail)
         p.setPen(QPen(QColor(255, 255, 255, 170), 1.2))
         for k in (0, 4, 8):
             p.drawLine(QPointF(cx + 14 + k * 0.2, y + 15.5), QPointF(cx + 14 + k + 0.2, y + 18))
         p.setPen(out)
-        p.setBrush(QColor("#FF6B6B"))
+        p.setBrush(col)
         band = QPainterPath(QPointF(cx - 31, y - 1))
         band.quadTo(cx, y + 5, cx + 31, y - 1)
         band.lineTo(cx + 30, y + 7.5)
@@ -4034,15 +4568,23 @@ class TypingBubble(QWidget):
     def paintEvent(self, _e) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        rect = QRectF(18, 6, 66, 34)
-        p.setPen(Qt.PenStyle.NoPen)
+        p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        rect = QRectF(18, 6, 72, 34)
+        p.setPen(QPen(QColor(255, 255, 255, 45), 1.0))
         p.setBrush(qcolor(T["other"]))
         p.drawRoundedRect(rect, 17, 17)
+        # 顶边 1px 微光
+        p.setPen(QPen(QColor(255, 255, 255, 80), 0.9))
+        p.drawLine(QPointF(rect.left() + 14, rect.top() + 0.8), QPointF(rect.right() - 14, rect.top() + 0.8))
         t = _now() - self._t0
+        acc = QColor(T["accent"])
+        p.setPen(Qt.PenStyle.NoPen)
         for i in range(3):
-            lift = max(0.0, math.sin(t * 6.5 - i * 0.75))
-            c = QColor(T["sub"])
-            c.setAlphaF(0.45 + 0.5 * lift)
+            wave = math.sin(t * 6.8 - i * 0.85)
+            lift = max(0.0, wave)
+            c = QColor(acc if lift > 0.35 else T["sub"])
+            c.setAlphaF(0.42 + 0.55 * lift)
+            r = 3.4 + 0.7 * lift
             p.setBrush(c)
-            p.drawEllipse(QPointF(rect.left() + 19 + i * 14, rect.center().y() - 4 * lift), 3.6, 3.6)
+            p.drawEllipse(QPointF(rect.left() + 21 + i * 15, rect.center().y() + 1.5 - 5.2 * lift), r, r)
         p.end()

@@ -426,16 +426,17 @@ class ChatMixin:
         return keys
 
     def send_text_to(self, conv: Conv, text: str) -> None:
+        aura = getattr(getattr(self, "pet_growth", None), "aura", "") or ""
         if conv.kind == "self":
-            self._self_add(Msg(text))
+            self._self_add(Msg(text, aura=aura))
             return
         scope, target = self.scope_target(conv)
         skin = self.current_skin()
-        mid = self.core.send_text(scope, target, text, 0, skin=skin)
+        mid = self.core.send_text(scope, target, text, 0, skin=skin, aura=aura)
         if mid is None:
             return
         m = Msg(text, mid=mid, sender=self.me["id"], nick=self.me.get("nick", ""), tag=self.me.get("tag", ""),
-                mine=True, skin=skin)
+                mine=True, skin=skin, aura=aura)
         self._add_message(conv, m)
 
     # ---------------------------------------------------------------- 戳一戳

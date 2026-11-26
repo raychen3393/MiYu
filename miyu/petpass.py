@@ -744,16 +744,23 @@ class _CloudJumpStage(QWidget):
         self.timer.setInterval(20)
         self.timer.timeout.connect(self._step)
 
+    GRAVITY = 900.0
+    JUMP_VY = -485.0          # 最大弹跳高度 ≈ 130.7px, 远高于云朵间距 50~66px
+    SPRING_VY = -700.0
+    STORM_VY = -425.0         # 雷云扣分但仍能弹起 ≈ 100.3px, 保证不会死局跳不上去
+
     def start_game(self) -> None:
         self.score = self.height_pts = self.star_pts = 0
         self.px = self.target_x = self.W / 2.0
         self.py = self.H - 72.0
-        self.vy = -440.0
-        self.clouds = [{"x": self.W / 2.0, "y": self.H - 42.0, "w": 110.0, "kind": "normal", "vx": 0.0}]
-        y = self.H - 108.0
+        self.vy = self.JUMP_VY
+        self._last_cloud_x = self.W / 2.0
+        self._last_cloud_kind = "normal"
+        self.clouds = [{"x": self.W / 2.0, "y": self.H - 42.0, "w": 116.0, "kind": "normal", "vx": 0.0}]
+        y = self.H - 102.0
         while y > -40:
             self._spawn_cloud(y)
-            y -= random.uniform(54.0, 74.0)
+            y -= random.uniform(50.0, 66.0)
         self.stars.clear()
         self.pops.clear()
         self.running = True
@@ -763,16 +770,25 @@ class _CloudJumpStage(QWidget):
         self.update()
 
     def _spawn_cloud(self, y: float) -> None:
-        kind = random.choices(("normal", "spring", "moving", "storm"), weights=(62, 16, 15, 7))[0]
-        cx = random.uniform(56.0, self.W - 56.0)
-        vx = random.choice((-65.0, 65.0)) if kind == "moving" else 0.0
-        self.clouds.append({"x": cx, "y": y, "w": 84.0 if kind != "storm" else 74.0, "kind": kind, "vx": vx})
-        if kind != "storm" and random.random() < 0.34:
+        # 绝不连续生成两朵雷云,确保每层都有稳定可达路径
+        if self._last_cloud_kind == "storm":
+            kind = random.choices(("normal", "spring", "moving"), weights=(68, 17, 15))[0]
+        else:
+            kind = random.choices(("normal", "spring", "moving", "storm"), weights=(62, 16, 15, 7))[0]
+        # 水平位移限制在上朵云 ±175px 范围内,杜绝对角线极限不可达云
+        lo = max(56.0, self._last_cloud_x - 175.0)
+        hi = min(self.W - 56.0, self._last_cloud_x + 175.0)
+        cx = random.uniform(lo, hi)
+        vx = random.choice((-62.0, 62.0)) if kind == "moving" else 0.0
+        self.clouds.append({"x": cx, "y": y, "w": 88.0 if kind != "storm" else 76.0, "kind": kind, "vx": vx})
+        self._last_cloud_x = cx
+        self._last_cloud_kind = kind
+        if kind != "storm" and random.random() < 0.36:
             self.stars.append({"x": cx, "y": y - 28.0})
 
     def mouseMoveEvent(self, e) -> None:
         pos = e.position() if hasattr(e, "position") else e.pos()
-        self.target_x = max(24.0, min(self.W - 24.0, float(pos.x())))
+        self.target_x = max(20.0, min(self.W - 20.0, float(pos.x())))
 
     def keyPressEvent(self, e) -> None:
         self.keys.add(e.key())
@@ -782,16 +798,22 @@ class _CloudJumpStage(QWidget):
 
     def _step(self) -> None:
         now = time.monotonic()
-        dt = min(0.04, max(0.005, now - self._last))
+        dt = min(0.035, max(0.005, now - self._last))
         self._last = now
         if not self.running:
             return
         if Qt.Key.Key_Left in self.keys or Qt.Key.Key_A in self.keys:
-            self.target_x = max(24.0, self.target_x - 340 * dt)
+            self.target_x -= 420.0 * dt
+            if self.target_x < 10.0:
+                self.target_x = self.W - 12.0
+                self.px = self.target_x
         if Qt.Key.Key_Right in self.keys or Qt.Key.Key_D in self.keys:
-            self.target_x = min(self.W - 24.0, self.target_x + 340 * dt)
+            self.target_x += 420.0 * dt
+            if self.target_x > self.W - 10.0:
+                self.target_x = 12.0
+                self.px = self.target_x
         dx = self.target_x - self.px
-        self.px += dx * min(1.0, dt * 13.0)
+        self.px += dx * min(1.0, dt * 18.0)
         self.pet.pose3d.yaw = max(-0.42, min(0.42, dx * 0.012))
         self.pet.pose3d.step(now, sleeping=False)
 
@@ -800,33 +822,35 @@ class _CloudJumpStage(QWidget):
                 c["x"] += c["vx"] * dt
                 if c["x"] < 52 or c["x"] > self.W - 52:
                     c["vx"] = -c["vx"]
+                    c["x"] = max(52.0, min(self.W - 52.0, c["x"]))
 
         prev_y = self.py
-        self.vy += 940.0 * dt
+        self.vy += self.GRAVITY * dt
         self.py += self.vy * dt
 
-        # 下落踩云判定
+        # 下落踩云判定:放宽水平脚掌判定(半宽+14px)并修正落点高度,杜绝高速穿云与边缘漏判
         if self.vy > 0:
             for c in self.clouds:
-                if abs(self.px - c["x"]) < c["w"] * 0.56 and prev_y <= c["y"] + 8 and self.py >= c["y"] - 6:
+                if abs(self.px - c["x"]) <= c["w"] * 0.5 + 14.0 and prev_y <= c["y"] + 12.0 and self.py >= c["y"] - 8.0:
+                    self.py = c["y"] - 4.0
                     if c["kind"] == "storm":
-                        self.vy = -300.0
+                        self.vy = self.STORM_VY
                         self.star_pts = max(0, self.star_pts - 15)
                         self.pops.append({"t": "⚡ -15", "x": c["x"], "y": c["y"] - 14, "life": 0.9, "col": "#FF6B6B"})
                         self.pet.pose3d.impulse(-0.22)
                     elif c["kind"] == "spring":
-                        self.vy = -660.0
+                        self.vy = self.SPRING_VY
                         self.pops.append({"t": "🚀 超级弹射!", "x": c["x"], "y": c["y"] - 14, "life": 1.0, "col": "#FFD43B"})
                         self.pet.pose3d.impulse(0.32)
                     else:
-                        self.vy = -445.0
+                        self.vy = self.JUMP_VY
                         self.pet.pose3d.impulse(0.18)
                     break
 
         # 吃星星
         kept_stars = []
         for s in self.stars:
-            if math.hypot(self.px - s["x"], (self.py - 18) - s["y"]) < 30:
+            if math.hypot(self.px - s["x"], (self.py - 18) - s["y"]) < 32:
                 self.star_pts += 25
                 self.pops.append({"t": "⭐ +25", "x": s["x"], "y": s["y"], "life": 0.9, "col": "#FFD43B"})
                 continue
@@ -848,7 +872,7 @@ class _CloudJumpStage(QWidget):
             self.stars = [s for s in self.stars if s["y"] < self.H + 30]
             top_y = min((c["y"] for c in self.clouds), default=0.0)
             while top_y > -30:
-                top_y -= random.uniform(56.0, 76.0)
+                top_y -= random.uniform(50.0, 66.0)
                 self._spawn_cloud(top_y)
 
         self.score = self.height_pts + self.star_pts

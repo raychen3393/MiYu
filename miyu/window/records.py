@@ -42,11 +42,19 @@ def msg_sig(m: Msg) -> tuple:
             (len(m.file.get("thumb") or ""), m.file.get("dur"), bool(m.file.get("probed"))) if m.file else None)
 
 
-def dict_matches(d: dict, q: str) -> bool:
+def dict_matches(d: dict, q: str, flt: str = "all") -> bool:
+    if flt == "img" and not d.get("img"):
+        return False
+    if flt == "file" and not isinstance(d.get("file"), dict):
+        return False
+    if flt == "mine" and not d.get("mine"):
+        return False
+    if not q:
+        return flt != "all"
     f = d.get("file")
     if isinstance(f, dict):
         return q in str(f.get("name", "")).lower()
-    return q in str(d.get("text", "")).lower()
+    return q in str(d.get("text", "")).lower() or q in str(d.get("nick", "")).lower()
 
 
 class RecordsMixin:
@@ -469,9 +477,10 @@ class RecordsMixin:
             known = self._db_known.get(conv.key, set())
             first = next((m for m in conv.messages if m.mid in known), None)
             older = []
+            flt = getattr(self, "_search_filter", "all")
             try:
                 for d in self.db.scan_older(conv.key, first.mid if first else None, first.time if first else None):
-                    if dict_matches(d, q):
+                    if dict_matches(d, q, flt):
                         older.append(d["mid"])
                         if len(older) + len(hits) >= SEARCH_MAX:
                             break

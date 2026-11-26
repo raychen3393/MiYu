@@ -600,11 +600,12 @@ DRAW = {
 
 
 _FILE_COLORS = {
-    "doc": "#4E7BD6", "docx": "#4E7BD6", "pdf": "#D2584F", "xls": "#3E9B63", "xlsx": "#3E9B63", "csv": "#3E9B63",
-    "ppt": "#D9783E", "pptx": "#D9783E", "zip": "#B08A3E", "rar": "#B08A3E", "7z": "#B08A3E",
-    "mp4": "#8B6CC9", "mov": "#8B6CC9", "mkv": "#8B6CC9", "mp3": "#C9608E", "wav": "#C9608E", "flac": "#C9608E",
-    "txt": "#7E8794", "md": "#7E8794", "exe": "#C95454", "msi": "#C95454", "bat": "#C95454",
-    "png": "#4FA3B8", "jpg": "#4FA3B8", "jpeg": "#4FA3B8", "gif": "#4FA3B8", "psd": "#3E7FC9",
+    "doc": "#4E7BD6", "docx": "#4E7BD6", "pdf": "#E05252", "xls": "#2F9E66", "xlsx": "#2F9E66", "csv": "#2F9E66",
+    "ppt": "#E87A3E", "pptx": "#E87A3E", "zip": "#D49B2A", "rar": "#D49B2A", "7z": "#D49B2A",
+    "mp4": "#8B6CC9", "mov": "#8B6CC9", "mkv": "#8B6CC9", "mp3": "#D65A92", "wav": "#D65A92", "flac": "#D65A92",
+    "txt": "#6C7A89", "md": "#5C6BC0", "py": "#7950F2", "js": "#E6A817", "ts": "#3178C6", "json": "#20A486",
+    "exe": "#C95454", "msi": "#C95454", "bat": "#C95454", "folder": "#4A90E2",
+    "png": "#22A6C9", "jpg": "#22A6C9", "jpeg": "#22A6C9", "gif": "#22A6C9", "webp": "#22A6C9", "psd": "#3E7FC9",
 }
 
 
@@ -657,8 +658,8 @@ def file_badge(ext: str, size: int = 42) -> QPixmap:
     return pm
 
 
-def paint_icon(p: QPainter, name: str, color: str, x: float, y: float, size: float, width: float = 1.7) -> None:
-    """在 painter 上 (x, y) 处画一个 size 大小的图标。"""
+def paint_icon(p: QPainter, name: str, color: str, x: float, y: float, size: float, width: float = 1.6) -> None:
+    """在 painter 上 (x, y) 处画一个 size 大小的统一 1.6px 圆头矢量图标。"""
     p.save()
     p.translate(x, y)
     p.scale(size / 24.0, size / 24.0)
@@ -682,7 +683,7 @@ def soft_shadow(p: QPainter, rect: QRectF, radius: float, alpha: int = 28, sprea
     p.restore()
 
 
-def icon(name: str, color: str, size: int = 20, width: float = 1.7) -> QIcon:
+def icon(name: str, color: str, size: int = 20, width: float = 1.6) -> QIcon:
     pm = _canvas(size)
     p = QPainter(pm)
     p.setRenderHint(QPainter.RenderHint.Antialiasing)

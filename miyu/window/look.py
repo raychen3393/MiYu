@@ -326,6 +326,10 @@ class LookMixin:
         if dw is not None:
             dw.pet.ambient_fx = kind or ""
             dw.update()
+        isl = getattr(self, "island", None)
+        if isl is not None:
+            aname = dict(S.AMBIENT).get(kind or "", "") if kind else ""
+            isl.set_ambient(aname)
 
     def set_ambient_volume(self, v: float) -> None:
         self.ambient_volume = v

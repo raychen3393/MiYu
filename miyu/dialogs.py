@@ -13,7 +13,7 @@ from PySide6.QtCore import QPointF, QRectF, QSize, QStandardPaths, QTimer, Qt, S
 from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import (
     QAbstractButton, QApplication, QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPlainTextEdit, QStackedWidget, QVBoxLayout, QWidget,
+    QPlainTextEdit, QPushButton, QScrollArea, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from . import imaging, theme
@@ -37,28 +37,80 @@ class Dialog(QDialog):
     def showEvent(self, e) -> None:
         super().showEvent(e)
         theme.style_titlebar(self)
-        if not getattr(self, "_shown_once", False):          # 第一次弹出时淡入
+        if not getattr(self, "_shown_once", False):          # 3.7: 第一次弹出时 150ms 轻弹淡入 + 微幅上滑
             self._shown_once = True
-            from .motion import fade_window
-            fade_window(self, 160)
+            from . import motion
+            motion.fade_window(self, 150)
+            if motion.ENABLED and not getattr(self, "_no_slide", False):
+                try:
+                    from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation
+                    end_p = self.pos()
+                    if end_p.x() != 0 or end_p.y() != 0:
+                        anim = QPropertyAnimation(self, b"pos", self)
+                        anim.setDuration(150)
+                        anim.setStartValue(QPoint(end_p.x(), end_p.y() + 8))
+                        anim.setEndValue(end_p)
+                        anim.setEasingCurve(QEasingCurve.Type.OutBack)
+                        anim.start()
+                        self._enter_pos_anim = anim
+                except Exception:
+                    pass
 
     def paintEvent(self, e) -> None:
         if self.objectName() != "viewer":
             theme.paint_wallpaper(self, e)
+            # 3.7 统一 1px 顶边液态玻璃高光折射边
+            p = QPainter(self)
+            p.setPen(QColor(255, 255, 255, 48 if theme.is_dark() else 140))
+            p.drawLine(0, 0, self.width(), 0)
+            p.end()
+
+
+def _screen_max_h(parent, ratio: float = 0.78, fallback: int = 560) -> int:
+    try:
+        scr = parent.screen() if parent is not None and hasattr(parent, "screen") and parent.screen() is not None else QApplication.primaryScreen()
+        if scr is not None and hasattr(scr, "availableGeometry"):
+            h = int(scr.availableGeometry().height() * ratio)
+            if h > 260:
+                return h
+    except Exception:
+        pass
+    return fallback
 
 
 class AlertDialog(Dialog):
     def __init__(self, parent, title: str, text: str, buttons: list[tuple[str, str]]) -> None:
         super().__init__(parent)
-        self.setFixedWidth(380)
+        long_text = bool(text) and (len(text) > 180 or text.count("\n") >= 5)
+        self.setFixedWidth(460 if long_text else 380)
+        self.setMaximumHeight(_screen_max_h(parent, 0.78, 580))
         self.choice = -1
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(30, 26, 30, 22)
+        lay.setContentsMargins(28 if long_text else 30, 24 if long_text else 26, 28 if long_text else 30, 20 if long_text else 22)
         lay.setSpacing(8)
         lay.addWidget(label(title, "dialogTitle", wrap=True, center=True))
         if text:
-            lay.addWidget(label(text, "hint", wrap=True, center=True))
-        lay.addSpacing(12)
+            if long_text:
+                card = QFrame(self)
+                card.setObjectName("plainCard")
+                cl = QVBoxLayout(card)
+                cl.setContentsMargins(14, 10, 10, 10)
+                body = label(text, "hint", wrap=True, center=False)
+                body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+                area = QScrollArea(card)
+                area.setWidgetResizable(True)
+                area.setFrameShape(QFrame.Shape.NoFrame)
+                area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+                area.setStyleSheet("QScrollArea { background: transparent; } QScrollArea > QWidget > QWidget { background: transparent; }")
+                area.setWidget(body)
+                max_scroll = min(360, max(180, _screen_max_h(parent, 0.52, 340)))
+                area.setMaximumHeight(max_scroll)
+                area.setMinimumHeight(min(max_scroll, 200))
+                cl.addWidget(area)
+                lay.addWidget(card, 1)
+            else:
+                lay.addWidget(label(text, "hint", wrap=True, center=True))
+        lay.addSpacing(10)
         row = QHBoxLayout()
         row.setSpacing(10)
         for i, (text_, kind) in enumerate(buttons):
@@ -384,6 +436,7 @@ class TextDialog(Dialog):
         super().__init__(parent, title)
         self.extra_clicked = False
         self.setFixedWidth(width)
+        self.setMaximumHeight(_screen_max_h(parent, 0.80, 620))
         lay = QVBoxLayout(self)
         lay.setContentsMargins(28, 24, 28, 22)
         lay.setSpacing(8)
@@ -394,7 +447,11 @@ class TextDialog(Dialog):
         cl = QVBoxLayout(card)
         cl.setContentsMargins(16, 12, 16, 12)
         cl.setSpacing(6)
+        total_chars = 0
+        total_lines = 0
         for i, (name, value) in enumerate(rows):
+            total_chars += len(name) + len(value)
+            total_lines += 1 + value.count("\n")
             if i:
                 cl.addSpacing(4)
                 cl.addWidget(hline())
@@ -404,7 +461,19 @@ class TextDialog(Dialog):
             v = label(value, "monoSmall" if name else "hint", wrap=True)
             v.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             cl.addWidget(v)
-        lay.addWidget(card)
+        if total_chars > 260 or total_lines >= 8 or len(rows) >= 5:
+            area = QScrollArea(self)
+            area.setWidgetResizable(True)
+            area.setFrameShape(QFrame.Shape.NoFrame)
+            area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            area.setStyleSheet("QScrollArea { background: transparent; } QScrollArea > QWidget > QWidget { background: transparent; }")
+            area.setWidget(card)
+            max_h = min(420, max(200, _screen_max_h(parent, 0.56, 380)))
+            area.setMaximumHeight(max_h)
+            area.setMinimumHeight(min(max_h, 220))
+            lay.addWidget(area, 1)
+        else:
+            lay.addWidget(card)
         if note:
             n = label(note, "faint", wrap=True)
             n.setContentsMargins(6, 4, 6, 0)
@@ -526,9 +595,10 @@ class _MosaicPreview(QLabel):
         self.dirty = False
         self._refresh()
 
-    def _refresh(self) -> None:
+    def _refresh(self, fast: bool = False) -> None:
+        mode = Qt.TransformationMode.FastTransformation if fast else Qt.TransformationMode.SmoothTransformation
         pm = QPixmap.fromImage(self._work).scaled(
-            340, 240, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+            340, 240, Qt.AspectRatioMode.KeepAspectRatio, mode
         )
         self.setPixmap(pm)
         self.setFixedSize(pm.size())
@@ -551,11 +621,11 @@ class _MosaicPreview(QLabel):
             for by in range(y0, y1, bs):
                 cx = min(w - 1, bx + bs // 2)
                 cy = min(h - 1, by + bs // 2)
-                p.setBrush(self._work.pixelColor(cx, cy))
+                p.setBrush(self._orig.pixelColor(cx, cy))
                 p.drawRect(bx, by, bs, bs)
         p.end()
         self.dirty = True
-        self._refresh()
+        self._refresh(fast=True)
 
     def mousePressEvent(self, e) -> None:
         if e.button() == Qt.MouseButton.LeftButton and self.mosaic_on:
@@ -567,7 +637,9 @@ class _MosaicPreview(QLabel):
             self._paint_mosaic_at(e.position() if hasattr(e, "position") else e.pos())
 
     def mouseReleaseEvent(self, e) -> None:
-        self._down = False
+        if self._down:
+            self._down = False
+            self._refresh(fast=False)
 
 
 class SendImageDialog(Dialog):
