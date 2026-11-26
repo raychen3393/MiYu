@@ -14,7 +14,7 @@ import threading
 import time
 
 from PySide6.QtCore import (
-    QEvent, QPoint, QPointF, QSize, QStandardPaths, QTimer, QUrl, Qt,
+    QEvent, QPoint, QPointF, QRect, QSize, QStandardPaths, QTimer, QUrl, Qt,
 )
 from PySide6.QtGui import QAction, QColor, QCursor, QDesktopServices, QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
@@ -153,6 +153,10 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         self.compact_side = False                  # 左侧会话栏紧凑模式(74px 头像轨)
         self.members_open = True                   # 右侧成员栏展开状态
         self._drag_win_pos: QPoint | None = None
+        self._resize_edges = ""                    # 无边框窗口边缘/四角拉伸状态("l"/"r"/"t"/"b"组合)
+        self._resize_start_pos: QPoint | None = None
+        self._resize_start_geom: QRect | None = None
+        self._resize_cursor_shape = None
         self.reply_to: Msg | None = None   # 正在引用回复的消息
         self.pending_at: dict[str, str] = {}   # 输入框里 @ 过的人:昵称 → id("all" = 所有人)
         self.transfers: dict[str, dict] = {}   # 文件传输状态 fid → {...}
@@ -200,7 +204,11 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         self.resize(1160, 760)
         self.setMinimumSize(860, 560)
         self.setAcceptDrops(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
         self._build()
+        _app = QApplication.instance()
+        if _app is not None and hasattr(_app, "installEventFilter"):
+            _app.installEventFilter(self)
         self.pet_growth = PetGrowth(self.account.get("pet"))
         self.pet.growth = self.pet_growth
         self._hooks("init")
@@ -908,36 +916,93 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
             self._update_min_width()
             self._refit_bubbles()
 
+    def _hit_resize_edges(self, local_pt: QPoint) -> str:
+        """命中无边框窗口 4 边与 4 角拉伸热区（四角 14px，四边 7px，右上角避让关闭按钮）。"""
+        w, h = self.width(), self.height()
+        x, y = local_pt.x(), local_pt.y()
+        if x < 0 or y < 0 or x > w or y > h:
+            return ""
+        edge, corner = 7, 14
+        left = x < edge
+        right = x >= w - edge
+        top = y < edge
+        bottom = y >= h - edge
+        if x < corner and y >= h - corner:
+            left = bottom = True
+        elif x >= w - corner and y >= h - corner:
+            right = bottom = True
+        elif x < corner and y < corner:
+            left = top = True
+        elif x >= w - 6 and y < 6:
+            right = top = True
+        return ("l" if left else "") + ("r" if right else "") + ("t" if top else "") + ("b" if bottom else "")
+
+    def _set_resize_cursor(self, edges: str) -> None:
+        shape = None
+        if edges in ("lt", "rb"):
+            shape = Qt.CursorShape.SizeFDiagCursor
+        elif edges in ("rt", "lb"):
+            shape = Qt.CursorShape.SizeBDiagCursor
+        elif edges in ("l", "r"):
+            shape = Qt.CursorShape.SizeHorCursor
+        elif edges in ("t", "b"):
+            shape = Qt.CursorShape.SizeVerCursor
+        if shape == self._resize_cursor_shape:
+            return
+        try:
+            if shape is None:
+                if self._resize_cursor_shape is not None:
+                    QApplication.restoreOverrideCursor()
+            elif self._resize_cursor_shape is None:
+                QApplication.setOverrideCursor(shape)
+            else:
+                QApplication.changeOverrideCursor(shape)
+        except Exception:
+            pass
+        self._resize_cursor_shape = shape
+
+    @staticmethod
+    def _compute_resize_box(x: int, y: int, w: int, h: int, dx: int, dy: int, edges: str,
+                            min_w: int, min_h: int, keep_ratio: bool = False) -> tuple[int, int, int, int]:
+        """按拖动位移计算新的窗口 (x, y, w, h)（严格约束最小尺寸；按住 Shift 拖四角可锁定等比例缩放）。"""
+        x1, y1, x2, y2 = x, y, x + w, y + h
+        nx1, ny1, nx2, ny2 = x1, y1, x2, y2
+        if "l" in edges:
+            nx1 = min(x1 + dx, x2 - min_w)
+        if "r" in edges:
+            nx2 = max(x2 + dx, x1 + min_w)
+        if "t" in edges:
+            ny1 = min(y1 + dy, y2 - min_h)
+        if "b" in edges:
+            ny2 = max(y2 + dy, y1 + min_h)
+        if keep_ratio and len(edges) == 2 and h > 0:
+            ratio = w / h
+            nw, nh = nx2 - nx1, ny2 - ny1
+            if abs(nw - w) / max(1, w) >= abs(nh - h) / max(1, h):
+                nh = max(min_h, int(round(nw / ratio)))
+                nw = max(min_w, int(round(nh * ratio)))
+            else:
+                nw = max(min_w, int(round(nh * ratio)))
+                nh = max(min_h, int(round(nw / ratio)))
+            if "l" in edges:
+                nx1 = x2 - nw
+            else:
+                nx2 = x1 + nw
+            if "t" in edges:
+                ny1 = y2 - nh
+            else:
+                ny2 = y1 + nh
+        return nx1, ny1, max(min_w, nx2 - nx1), max(min_h, ny2 - ny1)
+
+    @classmethod
+    def _compute_resize_geom(cls, start_geom: QRect, dx: int, dy: int, edges: str,
+                             min_w: int, min_h: int, keep_ratio: bool = False) -> QRect:
+        return QRect(*cls._compute_resize_box(
+            start_geom.x(), start_geom.y(), start_geom.width(), start_geom.height(),
+            dx, dy, edges, min_w, min_h, keep_ratio=keep_ratio,
+        ))
+
     def nativeEvent(self, eventType, message):
-        if self.frameless and sys.platform == "win32" and not self.isMaximized():
-            try:
-                if eventType in (b"windows_generic_MSG", "windows_generic_MSG"):
-                    import ctypes.wintypes
-                    msg = ctypes.wintypes.MSG.from_address(int(message))
-                    if msg.message == 0x0084:              # WM_NCHITTEST:边缘 6px 缩放窗口
-                        pt = self.mapFromGlobal(QCursor.pos())
-                        x, y, w, h = pt.x(), pt.y(), self.width(), self.height()
-                        b = 6
-                        left, right = 0 <= x < b, w - b <= x <= w
-                        top, bottom = 0 <= y < b, h - b <= y <= h
-                        if top and left:
-                            return True, 13
-                        if top and right:
-                            return True, 14
-                        if bottom and left:
-                            return True, 16
-                        if bottom and right:
-                            return True, 17
-                        if left:
-                            return True, 10
-                        if right:
-                            return True, 11
-                        if top:
-                            return True, 12
-                        if bottom:
-                            return True, 15
-            except Exception:
-                pass
         return super().nativeEvent(eventType, message)
 
     # ------------------------------------------------------------ 查询
@@ -2699,12 +2764,58 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
             self.typing_bubble.setVisible(conv.kind == "dm" and self.is_typing(conv.target))
 
     def eventFilter(self, obj, ev) -> bool:
+        t = ev.type()
+        # 无边框窗口全方向边缘/四角自由拉伸（不依赖 Win32 WS_THICKFRAME，按住 Shift 拖四角可锁定等比例缩放）
+        if self.frameless and sys.platform == "win32" and self.isVisible() and not self.isMaximized():
+            if t in (QEvent.Type.WindowDeactivate, QEvent.Type.Hide) and obj is self:
+                self._resize_edges = ""
+                self._set_resize_cursor("")
+            elif isinstance(obj, QWidget) and obj.window() is self:
+                if self._resize_edges:
+                    if t == QEvent.Type.MouseMove:
+                        gpos = ev.globalPosition().toPoint() if hasattr(ev, "globalPosition") else QCursor.pos()
+                        dx = gpos.x() - self._resize_start_pos.x()
+                        dy = gpos.y() - self._resize_start_pos.y()
+                        keep = bool(ev.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+                        rect = self._compute_resize_geom(
+                            self._resize_start_geom, dx, dy, self._resize_edges,
+                            self.minimumWidth(), self.minimumHeight(), keep_ratio=keep,
+                        )
+                        self.setGeometry(rect)
+                        return True
+                    if t == QEvent.Type.MouseButtonRelease:
+                        self._resize_edges = ""
+                        self._resize_start_pos = None
+                        self._resize_start_geom = None
+                        gpos = ev.globalPosition().toPoint() if hasattr(ev, "globalPosition") else QCursor.pos()
+                        self._set_resize_cursor(self._hit_resize_edges(self.mapFromGlobal(gpos)))
+                        return True
+                elif t in (QEvent.Type.MouseMove, QEvent.Type.HoverMove) and not (QApplication.mouseButtons() & Qt.MouseButton.LeftButton):
+                    if QApplication.activePopupWidget() is None and QApplication.activeModalWidget() is None:
+                        self._set_resize_cursor(self._hit_resize_edges(self.mapFromGlobal(QCursor.pos())))
+                    else:
+                        self._set_resize_cursor("")
+                elif t == QEvent.Type.MouseButtonPress and ev.button() == Qt.MouseButton.LeftButton:
+                    if QApplication.activePopupWidget() is None and QApplication.activeModalWidget() is None:
+                        gpos = ev.globalPosition().toPoint() if hasattr(ev, "globalPosition") else QCursor.pos()
+                        edges = self._hit_resize_edges(self.mapFromGlobal(gpos))
+                        if edges:
+                            self._resize_edges = edges
+                            self._resize_start_pos = gpos
+                            self._resize_start_geom = QRect(self.geometry())
+                            self._set_resize_cursor(edges)
+                            return True
+                elif t in (QEvent.Type.Leave, QEvent.Type.HoverLeave) and obj is self and not self._resize_edges:
+                    self._set_resize_cursor("")
+        elif self._resize_cursor_shape is not None:
+            self._resize_edges = ""
+            self._set_resize_cursor("")
+
         if obj is getattr(self, "_pill", None) or obj is getattr(self, "_composer", None):
-            if ev.type() in (QEvent.Type.Move, QEvent.Type.Resize, QEvent.Type.Show):
+            if t in (QEvent.Type.Move, QEvent.Type.Resize, QEvent.Type.Show):
                 self.chat_panel.place_overlays()
         if self.frameless and obj in (getattr(self, "_chat_header", None), getattr(self, "sidebar_panel", None),
                                       getattr(self, "members_panel", None)):
-            t = ev.type()
             if t == QEvent.Type.MouseButtonDblClick and obj is getattr(self, "_chat_header", None):
                 if ev.button() == Qt.MouseButton.LeftButton:
                     self.toggle_maximize()
@@ -3154,6 +3265,26 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         if isinstance(offers, dict):
             self.core.restore_offers(offers)
         self.apply_manual_mesh_ips()
+        if isinstance(self.easytier_cfg, dict) and self.easytier_cfg.get("auto_start"):
+            QTimer.singleShot(700, self._auto_start_easytier)
+
+    def _auto_start_easytier(self) -> None:
+        """上次退出前开启着跨网联机时，启动密语后自动重连（仅放行已通过指纹校验的内核）。"""
+        if self._force_quit or not isinstance(self.easytier_cfg, dict):
+            return
+        from .easytier import should_auto_start
+        if not should_auto_start(self.easytier_cfg):
+            return
+        if self.easytier_mgr is not None and self.easytier_mgr.running:
+            return
+        ok, msg = self.start_easytier(self.easytier_cfg, persist=False)
+        lobby = self.convs.get("lobby")
+        if lobby is not None:
+            rname = str(self.easytier_cfg.get("network_name") or "").strip()
+            if ok:
+                self._system(lobby, f"🌐 已自动拉起跨网联机房间「{rname}」，正在连接打洞…")
+            else:
+                self._system(lobby, f"🌐 跨网联机未自动启动：{msg}")
 
     # ------------------------------------------------------------ 3.9 跨网联机(EasyTier)
     def easytier_status_line(self) -> str:
@@ -3211,7 +3342,7 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
             if isinstance(ip, str) and ip.strip():
                 self.core.add_manual_target(ip.strip())
 
-    def start_easytier(self, cfg: dict) -> tuple[bool, str]:
+    def start_easytier(self, cfg: dict, *, persist: bool = True) -> tuple[bool, str]:
         from .easytier import EasyTierManager, clean_config
         self.easytier_cfg = clean_config(cfg)
         if self.easytier_mgr is None:
@@ -3219,13 +3350,16 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
             self.easytier_mgr = EasyTierManager(folder)
         ok, msg = self.easytier_mgr.start(self.easytier_cfg)
         if ok:
+            if persist:
+                self.easytier_cfg["auto_start"] = True
+                self.save_account(force=True)
             self._et_last_ip = ""
             self._et_timer.start()
             QTimer.singleShot(900, self._poll_easytier)
             self.core.refresh_interfaces()
         return ok, msg
 
-    def stop_easytier(self) -> None:
+    def stop_easytier(self, *, remember_off: bool = False) -> None:
         self._et_timer.stop()
         if self.easytier_mgr is not None:
             try:
@@ -3235,6 +3369,9 @@ class MainWindow(EventsMixin, SecurityMixin, ChatMixin, FavoritesMixin, FilesMix
         self._et_last_ip = ""
         if hasattr(self.core, "set_mesh_targets"):
             self.core.set_mesh_targets([])
+        if remember_off and isinstance(self.easytier_cfg, dict) and self.easytier_cfg.get("auto_start"):
+            self.easytier_cfg["auto_start"] = False
+            self.save_account(force=True)
 
     def _poll_easytier(self) -> None:
         mgr = self.easytier_mgr

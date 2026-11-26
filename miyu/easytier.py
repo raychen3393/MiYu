@@ -83,6 +83,12 @@ def _filter_peers(raw_peers) -> list[str]:
     return out or list(DEFAULT_PEERS)
 
 
+def should_auto_start(cfg) -> bool:
+    """仅当已配置房间名+密码且上次退出前处于开启状态时，启动密语自动重连跨网。"""
+    c = clean_config(cfg)
+    return bool(c["auto_start"] and c["network_name"] and len(c["network_secret"]) >= 4)
+
+
 def clean_config(raw) -> dict:
     base = default_config()
     if not isinstance(raw, dict):
@@ -716,7 +722,10 @@ class EasyTierManager:
             st = G.read_status(self._root, self._nonce)
             if st == "running":
                 self._remove_launch_file()
-            elif st and st != "running":
+            elif not st:
+                # 管理员看门狗还在复制/校验内核(或用户尚未点 UAC),先别跑 easytier-cli.exe 避免抢占文件锁
+                return self.state, self.local_ip, self.peers
+            elif st != "running":
                 kind, _, detail = st.partition(":")
                 self.running = False
                 self.state = "error"
@@ -916,11 +925,13 @@ class EasyTierDialog(Dialog):
     def _collect_cfg(self) -> dict:
         peers = [ln.strip() for ln in self.peers_edit.toPlainText().splitlines() if "://" in ln.strip()]
         mips = [ln.strip() for ln in self.manual_edit.toPlainText().splitlines() if ln.strip()]
+        prev = getattr(self.win, "easytier_cfg", None) or {}
         return clean_config({
             "network_name": self.name_edit.text().strip(),
             "network_secret": self.sec_edit.text().strip(),
             "peers": peers or list(DEFAULT_PEERS),
             "manual_ips": mips,
+            "auto_start": bool(prev.get("auto_start", False)),
             "trusted": self._trusted_list(),
         })
 
@@ -1028,8 +1039,8 @@ class EasyTierDialog(Dialog):
     def _toggle_mesh(self) -> None:
         mgr = getattr(self.win, "easytier_mgr", None)
         if mgr is not None and mgr.running:
-            self.win.stop_easytier()
-            self.tip_lab.setText("⏹ 已断开跨网联机并关闭后台内核，已恢复纯局域网模式。")
+            self.win.stop_easytier(remember_off=True)
+            self.tip_lab.setText("⏹ 已断开跨网联机并关闭后台内核（下次启动保持纯局域网）。")
         else:
             cfg = self._apply_cfg()
             ok, msg = self.win.start_easytier(cfg)
@@ -1042,7 +1053,8 @@ class EasyTierDialog(Dialog):
                     ok, msg = self.win.start_easytier(self._apply_cfg())
                 else:
                     msg = "已取消：未经校验的 EasyTier 内核不会以管理员权限运行。可点「一键下载内核」获取官方校验版。"
-            self.tip_lab.setText(("🚀 " if ok else "⚠️ ") + msg)
+            extra = "（已记住开启状态，下次启动将自动重连）" if ok else ""
+            self.tip_lab.setText(("🚀 " if ok else "⚠️ ") + msg + extra)
             if not ok and not pending and "尚未安装" in msg:
                 info(self, "需要 EasyTier 内核", msg)
         self.refresh()

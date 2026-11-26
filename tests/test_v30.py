@@ -20,7 +20,7 @@ from miyu.window import pet as win_pet, records as win_records  # noqa: E402
 
 class V30BugfixAndSecurityTests(unittest.TestCase):
     def test_version_and_changelog_synced(self):
-        self.assertEqual(version.VERSION, "3.9.3")
+        self.assertEqual(version.VERSION, "3.9.8")
         self.assertEqual(changelog.CHANGELOG[0][0], version.VERSION)
 
     def test_password_change_preserves_all_encrypted_blobs(self):
@@ -515,6 +515,54 @@ class V30Pet3DAndUIUpgradeTests(unittest.TestCase):
                 et_out = ET.ensure_bundled_easytier(tmp2)
                 self.assertTrue(et_out and os.path.isfile(os.path.join(et_out, ET.CORE_EXE)))
 
+    def test_v395_frameless_resize_math(self):
+        from miyu.gui import MainWindow
+        # 右下角自由拉伸
+        self.assertEqual(
+            MainWindow._compute_resize_box(100, 100, 1000, 500, 120, 80, "rb", 860, 520, keep_ratio=False),
+            (100, 100, 1120, 580),
+        )
+        # 左上角向内压缩严格受最小尺寸保护，右下角锚点不动
+        self.assertEqual(
+            MainWindow._compute_resize_box(100, 100, 1000, 500, 500, 500, "lt", 860, 520, keep_ratio=False),
+            (240, 80, 860, 520),
+        )
+        # 按住 Shift 拖右下角锁定 2:1 等比例缩放
+        self.assertEqual(
+            MainWindow._compute_resize_box(100, 100, 1000, 500, 200, 10, "rb", 400, 200, keep_ratio=True),
+            (100, 100, 1200, 600),
+        )
+        # 3.9.7: 跨网联机启动自动重连判定(未配置/未开启/密码不足均不自动拉起)
+        from miyu import easytier as ET
+        self.assertFalse(ET.should_auto_start({}))
+        self.assertFalse(ET.should_auto_start({"network_name": "买了否冷", "network_secret": "1234", "auto_start": False}))
+        self.assertFalse(ET.should_auto_start({"network_name": "买了否冷", "network_secret": "123", "auto_start": True}))
+        self.assertTrue(ET.should_auto_start({"network_name": "买了否冷", "network_secret": "1234", "auto_start": True}))
+        # 3.9.8: 跨网高延迟丢包后定时补发 ver 版本通告
+        from miyu.window import system as sys_mod
+
+        class _FakeSys(sys_mod.SystemMixin):
+            def __init__(self):
+                self._own_checked = None
+                self.own_release = {"fid": "a" * 32, "size": 1024}
+                self.peers = {"p1": {"online": True}, "p2": {"online": True}, "p3": {"online": False}}
+                self.peer_versions = {"p2": "3.9.0"}
+                self.update = {"state": "none"}
+                self.update_mode = "auto"
+                self._save_tick = 12
+                self.sent = []
+
+            def _send_ver(self, pid: str) -> None:
+                self.sent.append(pid)
+
+        fs = _FakeSys()
+        fs._tick_system(0.0)
+        self.assertEqual(fs.sent, ["p1"])
+        fs.sent.clear()
+        fs._save_tick = 60
+        fs._tick_system(0.0)
+        self.assertEqual(sorted(fs.sent), ["p1", "p2"])
+
     def test_v394_easytier_guard(self):
         """3.9.4:EasyTier 内核提权前的 SHA-256 白名单校验、受保护目录启动脚本、官方包下载核对。"""
         import base64
@@ -619,7 +667,8 @@ class V30Pet3DAndUIUpgradeTests(unittest.TestCase):
                 ET.find_easytier_dirs, ET.bundled_easytier_zip = orig_find, orig_bundle
 
             # 7. 下载:整包指纹不是官方值就丢弃;是官方值才解压并返回指纹
-            payload = open(zp, "rb").read()
+            with open(zp, "rb") as _zf:
+                payload = _zf.read()
 
             class _Resp(io.BytesIO):
                 headers = {"Content-Length": str(len(payload))}

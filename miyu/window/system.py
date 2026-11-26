@@ -282,6 +282,15 @@ class SystemMixin:
     def _tick_system(self, now: float) -> None:
         if self._own_checked and self.own_release is None:
             self.offer_own_release()
+        # 3.9.8: 跨网高延迟下双端同时建连可能顶掉首条 ver 事件,对尚未报版本的在线好友定时补发(每 12 秒)
+        if self._save_tick % 12 == 0:
+            for pid, p in list(self.peers.items()):
+                if not p.get("online"):
+                    continue
+                if pid not in self.peer_versions:
+                    self._send_ver(pid)
+                elif self._save_tick % 60 == 0 and self.own_release and U.newer(VERSION, self.peer_versions[pid]):
+                    self._send_ver(pid)
         u = self.update
         if (u.get("state") == "offered" and self.update_mode == "auto" and self._save_tick % 20 == 0
                 and self.peers.get(u.get("peer"), {}).get("online")):
@@ -326,7 +335,10 @@ class SystemMixin:
         pid, v, rel = d["peer"], data.get("v"), data.get("rel")
         if not U.valid_version(v):
             return
+        first_seen = pid not in self.peer_versions
         self.peer_versions[pid] = v
+        if first_seen and self.own_release and U.newer(VERSION, v):
+            self._send_ver(pid)                      # 首次收到对方旧版本时立刻补推一次我的签名发布版
         if not (U.newer(v) and isinstance(rel, dict) and self.can_update() and self.update_mode != "off"):
             return
         fid, size = rel.get("fid"), rel.get("size")
@@ -463,6 +475,10 @@ class SystemMixin:
             a.triggered.connect(lambda _=False, k=key: self.set_update_mode(k))
 
     def show_update(self) -> None:
+        for pid, p in list(self.peers.items()):
+            if p.get("online") and (pid not in self.peer_versions
+                                    or (self.own_release and U.newer(VERSION, self.peer_versions[pid]))):
+                self._send_ver(pid)
         rows = [("我的版本", f"v{VERSION}")]
         if not self.update_key:
             status = "这份软件没有发布签名(比如直接用源码运行),不参与自动更新。"

@@ -306,7 +306,13 @@ def build_launch_script(src_dir: str, files: dict[str, str], hashes: dict[str, s
         "  Get-ChildItem -LiteralPath $dst -File | Where-Object { -not $files.ContainsKey($_.Name) } |"
         " Remove-Item -Force -ErrorAction SilentlyContinue",
         "  foreach ($k in @($files.Keys)) {",
-        "    Copy-Item -LiteralPath (Join-Path $src $k) -Destination (Join-Path $dst $k) -Force",
+        "    $df = Join-Path $dst $k",
+        "    $sf = Join-Path $src $k",
+        "    if (-not (Test-Path -LiteralPath $df)) {",
+        "      Copy-Item -LiteralPath $sf -Destination $df -Force",
+        "    } else {",
+        "      try { Copy-Item -LiteralPath $sf -Destination $df -Force -ErrorAction Stop } catch {}",
+        "    }",
         "  }",
         # 关键:校验的是复制到受保护目录之后的那一份,校验完别人就改不了了
         "  foreach ($k in @($files.Keys)) {",
